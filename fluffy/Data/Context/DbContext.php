@@ -2,56 +2,179 @@
 
 namespace Fluffy\Data\Context;
 
+use Exception;
 use Fluffy\Data\Connector\IConnector;
+use Fluffy\Data\Entities\BaseEntity;
+use Fluffy\Data\Entities\BaseEntityMap;
 use Fluffy\Data\Mapper\IMapper;
+use Fluffy\Data\Query\Query;
 use RuntimeException;
+use Swoole\Coroutine\PostgreSQL;
 
 class DbContext
 {
-    public function __construct(private IMapper $mapper, private IConnector $connector)
+    public function __construct(private IMapper $mapper, private IConnector $connector) {}
+
+    /**
+     * 
+     * @param BaseEntity|string $entityType 
+     * @param BaseEntityMap|string $entityMap 
+     * @return void 
+     */
+    public static function registerEntity(string $entityType,  string $entityMap)
     {
+        EntitiesMap::$map[$entityType] = $entityMap;
     }
 
-    public function from(string $entityType, ?string $entityMap = null)
-    {
-        return (new DbQuery($this))->from($entityType, $entityMap ?? EntitiesMap::$map[$entityType] ?? throw new RuntimeException("Entity map is not set for '$entityType'"));
-    }
-
-    public function execute(DbQuery $query)
+    public function execute(Query $query)
     {
         $pg = $this->connector->get();
-        $sql = $this->buildSQL($query);
-        $stmt = $pg->query($sql);
+        $entityMap = $query->entityTypeMap ?? EntitiesMap::$map[$query->entityType] ?? throw new Exception("{$query->entityType} has no registered entity map.");
+        $sqlQueries = $this->buildQuery($query, $pg, $entityMap);
+        // print_r([$sqlQueries]);
 
-        if (!$stmt) {
-            throw new RuntimeException("{$pg->error} {$pg->errCode}");
+        $list = [];
+        if (isset($sqlQueries['list'])) {
+            $stmt = $pg->query($sqlQueries['list']);
+            if (!$stmt) {
+                throw new RuntimeException("{$pg->error} {$pg->errCode}");
+            }
+            $arr = $stmt->fetchAll(SW_PGSQL_ASSOC);
+            $list = $arr ? array_map(fn($row) => $row ? $this->mapper->mapAssoc($query->entityType, $row) : null, $arr) : [];
+
+            // includes
+            $foreignKeys = $entityMap::ForeignKeys();
+            foreach ($query->includes as $includeProp) {
+                if (!isset($foreignKeys[$includeProp])) {
+                    throw new Exception("$includeProp is not configured in $entityMap.");
+                }
+                // collect ids
+                $referenceKey = $foreignKeys[$includeProp]['Columns'][0];
+                $columnKey = $foreignKeys[$includeProp]['References'][0];
+                $ids = array_unique(array_map(fn(BaseEntity $entity) => $entity->{$referenceKey}, $list));
+                $entitiesToInclude = $this->execute(Query::from($foreignKeys[$includeProp]['Table'])
+                    ->where([$columnKey, 'in', $ids])
+                    ->withCount(false));
+
+                $map = [];
+                foreach ($entitiesToInclude['list'] as $entity) {
+                    /**
+                     * @var BaseEntity $entity
+                     */
+                    $map[$entity->{$columnKey}] = $entity;
+                }
+                foreach ($list as $entity) {
+                    /**
+                     * @var BaseEntity $entity
+                     */
+                    if (isset($map[$entity->{$referenceKey}])) {
+                        $entity->{$includeProp} = $map[$entity->{$referenceKey}];
+                    }
+                }
+            }
+        }
+        $result = ['list' => $list];
+
+        if (isset($sqlQueries['count'])) {
+            $stmt = $pg->query($sqlQueries['count']);
+            if (!$stmt) {
+                throw new RuntimeException("{$pg->error} {$pg->errCode}");
+            }
+            $arr = $stmt->fetchAssoc();
+            $result['total'] = $arr['count'];
         }
 
-        $arr = $stmt->fetchAll();
-
-        $entities = $arr
-            ? array_map(fn ($assoc) => $assoc ? $this->mapper->mapAssoc($query->entityType, $assoc) : null, $arr)
-            : null;
-
-        return $entities;
+        return $result;
     }
 
-    public function buildSQL(DbQuery $query): string
+    /**
+     * 
+     * @param Query $query 
+     * @param PostgreSQL $pg 
+     * @param BaseEntityMap|string $entityMap 
+     * @return array 
+     */
+    public function buildQuery(Query $query, PostgreSQL $pg, string $entityMap): array
     {
+
         $select = '';
         $comma = '';
-        // var_dump($emptyEntity);
-        // $emptyEntity->me;
-        // var_dump($emptyEntity);
-        foreach ($query->entityMap::Columns() as $property => $_) {
+        foreach ($entityMap::Columns() as $property => $_) {
             $select .= "$comma\"{$property}\"";
             $comma = ', ';
         }
-        $keyName = $query->entityMap::$PrimaryKeys[0];
-        // $primaryKeyCondition = "\"{$keyName}\" = $Id";
-        $where = '';
-        $orderBy = "ORDER BY \"{$keyName}\" ASC";
-        $sql = "SELECT $select FROM {$query->entityMap::$Schema}.\"{$query->entityMap::$Table}\" $where $orderBy";
-        return $sql;
+
+        $orderGlue = "ORDER BY ";
+        $orderBy = '';
+        foreach ($query->orderBys as [$column, $orderWay]) {
+            $orderBy .= $orderGlue . "\"$column\"" . ($orderWay > 0 ? " ASC" : " DESC");
+            $orderGlue = ', ';
+        }
+
+        $wherePart = $this->buildWhere($query->expressions, $pg);
+        if ($wherePart) {
+            $wherePart = "WHERE $wherePart";
+        }
+
+        $queries = [];
+
+        $limit = '';
+        if ($query->take !== 0) {
+            if ($query->page > 0) {
+                $offset = ($query->page - 1) * $query->take;
+                $limit = "LIMIT {$query->take} OFFSET $offset";
+            } elseif ($query->skip) {
+                $limit = "LIMIT {$query->take} OFFSET {$query->skip}";
+            } elseif ($query->take > 0) {
+                $limit = "LIMIT {$query->take}";
+            }
+            $queries['list'] =  "SELECT $select FROM {$entityMap::$Schema}.\"{$entityMap::$Table}\" $wherePart $orderBy $limit";
+        }
+
+        if ($query->withCount) {
+            $queries['count'] = "SELECT COUNT(*) as \"count\" FROM {$entityMap::$Schema}.\"{$entityMap::$Table}\" $wherePart";
+        }
+
+        return $queries;
+    }
+
+    public function buildWhere(array $where, PostgreSQL $pg, string $concatOperator = "AND"): string
+    {
+        $wherePart = '';
+        $whereGlue = '';
+        foreach ($where as $condition) {
+            $column = $condition[0];
+            $orOperator = is_array($column);
+            if ($orOperator) {
+                $total = count($condition);
+                $wherePart .= $whereGlue . ($total > 1 ? '(' : '') . $this->buildWhere($condition, $pg, 'OR') . ($total > 1 ? ')' : '');
+            } else {
+                $hasOperator = isset($condition[2]);
+                $value = $this->buildValue($hasOperator ? $condition[2] : $condition[1], $pg);
+                $operator = $hasOperator ? $condition[1] : '=';
+
+                $wherePart .= $whereGlue . "\"$column\" $operator $value";
+            }
+            $whereGlue = " $concatOperator ";
+        }
+        return $wherePart;
+    }
+
+    public function buildValue($value, PostgreSQL $pg)
+    {
+        if (is_bool($value)) {
+            $value = $value ? 'true' : 'false';
+        } else if ($value === null) {
+            $value = 'NULL';
+        } else if (is_integer($value)) {
+            // same
+        } else if (is_float($value)) {
+            $value = number_format($value, 8, '.', '');
+        } else if (is_array($value)) {
+            $value = "(" . implode(", ", array_map(fn($x) => $this->buildValue($x, $pg, ""), $value)) . ")";
+        } else {
+            $value = $pg->escapeLiteral($value);
+        }
+        return $value;
     }
 }

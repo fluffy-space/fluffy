@@ -619,7 +619,7 @@ class BasePostgresqlRepository
         );
         
         ALTER TABLE IF EXISTS $schema."$tableName"
-            OWNER to $dbUserName;        
+            OWNER to "$dbUserName";        
         $indexes
         EOD;
         // echo $sql . PHP_EOL;

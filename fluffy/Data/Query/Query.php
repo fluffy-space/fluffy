@@ -15,6 +15,7 @@ class Query
     public int $skip = 0;
     public bool $withCount = true;
     public ?string $entityTypeMap = null;
+    public bool $firstOrDefault = false;
     /**
      * 
      * @param string|BaseEntity $entityType 
@@ -124,6 +125,14 @@ class Query
     public function withEntityMap(string $entityMap): self
     {
         $this->entityTypeMap = $entityMap;
+        return $this;
+    }
+
+    public function firstOrDefault(): self
+    {
+        $this->firstOrDefault = true;
+        $this->skip = 0;
+        $this->take = 1;
         return $this;
     }
 }

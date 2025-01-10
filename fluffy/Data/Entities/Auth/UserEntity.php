@@ -13,5 +13,6 @@ class UserEntity extends BaseEntity
     public ?string $Phone = null;
     public ?string $Password = null;
     public bool $Active = false;
-    public bool $EmailConfirmed = false;
+    public bool $EmailConfirmed = false;    
+    public bool $IsAdmin = false;
 }

@@ -45,6 +45,7 @@ class UserEntityMap extends BaseEntityMap
             'Password' => CommonMap::$VarChar255Null,
             'Active' => CommonMap::$Boolean,
             'EmailConfirmed' => CommonMap::$Boolean,
+            'IsAdmin' => CommonMap::$Boolean,
             'CreatedOn' => CommonMap::$MicroDateTime,
             'CreatedBy' => CommonMap::$VarChar255Null,
             'UpdatedOn' => CommonMap::$MicroDateTime,

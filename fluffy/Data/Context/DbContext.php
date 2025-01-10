@@ -32,7 +32,9 @@ class DbContext
         $entityMap = $query->entityTypeMap ?? EntitiesMap::$map[$query->entityType] ?? throw new Exception("{$query->entityType} has no registered entity map.");
         $sqlQueries = $this->buildQuery($query, $pg, $entityMap);
         // print_r([$sqlQueries]);
-
+        /**
+         * @var BaseEntity[] $list
+         */
         $list = [];
         if (isset($sqlQueries['list'])) {
             $stmt = $pg->query($sqlQueries['list']);
@@ -51,30 +53,43 @@ class DbContext
                 // collect ids
                 $referenceKey = $foreignKeys[$includeProp]['Columns'][0];
                 $columnKey = $foreignKeys[$includeProp]['References'][0];
-                $ids = array_unique(array_map(fn(BaseEntity $entity) => $entity->{$referenceKey}, $list));
-                $entitiesToInclude = $this->execute(Query::from($foreignKeys[$includeProp]['Table'])
-                    ->where([$columnKey, 'in', $ids])
-                    ->withCount(false));
-
-                $map = [];
-                foreach ($entitiesToInclude['list'] as $entity) {
-                    /**
-                     * @var BaseEntity $entity
-                     */
-                    $map[$entity->{$columnKey}] = $entity;
-                }
+                $idMap = [];
+                $hasIds = false;
                 foreach ($list as $entity) {
-                    /**
-                     * @var BaseEntity $entity
-                     */
-                    if (isset($map[$entity->{$referenceKey}])) {
-                        $entity->{$includeProp} = $map[$entity->{$referenceKey}];
+                    $keyValue = $entity->{$referenceKey};
+                    if ($keyValue && !isset($idMap[$keyValue])) {
+                        $ids[] = $keyValue;
+                        $idMap[$keyValue] = 1;
+                        $hasIds = true;
+                    }
+                }
+                if ($hasIds) {
+                    $entitiesToInclude = $this->execute(Query::from($foreignKeys[$includeProp]['Table'])
+                        ->where([$columnKey, 'in', $ids])
+                        ->withCount(false));
+
+                    $map = [];
+                    foreach ($entitiesToInclude['list'] as $entity) {
+                        /**
+                         * @var BaseEntity $entity
+                         */
+                        $map[$entity->{$columnKey}] = $entity;
+                    }
+                    foreach ($list as $entity) {
+                        /**
+                         * @var BaseEntity $entity
+                         */
+                        if (isset($map[$entity->{$referenceKey}])) {
+                            $entity->{$includeProp} = $map[$entity->{$referenceKey}];
+                        }
                     }
                 }
             }
         }
         $result = ['list' => $list];
-
+        if ($query->firstOrDefault) {
+            return $list ? $list[0] : null;
+        }
         if (isset($sqlQueries['count'])) {
             $stmt = $pg->query($sqlQueries['count']);
             if (!$stmt) {
@@ -131,7 +146,7 @@ class DbContext
             $queries['list'] =  "SELECT $select FROM {$entityMap::$Schema}.\"{$entityMap::$Table}\" $wherePart $orderBy $limit";
         }
 
-        if ($query->withCount) {
+        if ($query->withCount && !$query->firstOrDefault) {
             $queries['count'] = "SELECT COUNT(*) as \"count\" FROM {$entityMap::$Schema}.\"{$entityMap::$Table}\" $wherePart";
         }
 

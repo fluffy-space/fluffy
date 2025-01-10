@@ -60,6 +60,12 @@ class AuthorizationService
         return false;
     }
 
+    public function authorizeAdminRequest(): bool
+    {
+        $user = $this->getAuthorizedUser();
+        return $user?->IsAdmin ?? false;
+    }
+
     public function authorizeCSRF(): bool
     {
         $csrfToken = $this->session->getSession()?->CSRF;

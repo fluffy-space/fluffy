@@ -51,6 +51,8 @@ class BaseStartUp implements IStartUp
     {
     }
 
+    public function configureDb(IServiceProvider $serviceProvider): void { }
+
     function configureServices(IServiceProvider $serviceProvider): void
     {
         $serviceProvider->addSingleton(TaskManager::class);

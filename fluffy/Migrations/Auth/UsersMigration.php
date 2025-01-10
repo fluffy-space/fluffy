@@ -30,6 +30,7 @@ class UsersMigration extends BaseMigration
                 'Password' => CommonMap::$VarChar255Null,
                 'Active' => CommonMap::$Boolean,
                 'EmailConfirmed' => CommonMap::$Boolean,
+                'IsAdmin' => CommonMap::$Boolean,
                 'CreatedOn' => CommonMap::$MicroDateTime,
                 'CreatedBy' => CommonMap::$VarChar255Null,
                 'UpdatedOn' => CommonMap::$MicroDateTime,
@@ -61,6 +62,7 @@ class UsersMigration extends BaseMigration
             $admin->LastName = $user['LastName'];
             $admin->UserName = $admin->Email;
             $admin->Password = $this->auth->hashPassword($user['Password']);
+            $admin->IsAdmin = true;
             $this->userRepository->create($admin);
         }
     }

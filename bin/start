@@ -1,9 +1,6 @@
 #!/usr/bin/env php
 <?php
 
-use Application\App;
-use Application\StartUp;
-
 use function Swoole\Coroutine\run;
 
 $currentDir = getcwd();
@@ -20,7 +17,7 @@ $params = array_slice($inputs, 1);
 switch ($inputs[0]) {
     case 'watch': {
             require __DIR__ . '/Watcher.php';
-            $config = require $configDir . '/watchConfig.php';
+            $config = require $configDir . '/watch.php';
             $watcher = new Watcher($currentDir, $params, $config);
             $watcher->start();
             break;
@@ -47,7 +44,7 @@ switch ($inputs[0]) {
             // vendor autoload
             require $currentDir . '/vendor/autoload.php';
             require __DIR__ . '/Builder.php';
-            $config = require $configDir . '/build.env.php';
+            $config = require $configDir . '/build.php';
             (new Builder($currentDir, $params, $config))->build();
             break;
         }
@@ -58,13 +55,15 @@ switch ($inputs[0]) {
                 $command = $params[0] ?? 'migrate';
                 switch ($command) {
                     case 'migrate': {
-                            $app = new App(new StartUp());
+                            $config = require $configDir . '/server.php';
+                            $app = $config['app_factory']();
                             $app->runMigrations();
                             break;
                         }
                     case 'rollback': {
                             $migration = $params[1] ?? throw new Exception("Migration name was not provided.");
-                            $app = new App(new StartUp());
+                            $config = require $configDir . '/server.php';
+                            $app = $config['app_factory']();
                             $app->rollbackMigration($migration);
                             break;
                         }
@@ -77,8 +76,9 @@ switch ($inputs[0]) {
     case 'install': {
             // vendor autoload
             require $currentDir . '/vendor/autoload.php';
-            run(function () {
-                $app = new App(new StartUp());
+            run(function () use ($configDir) {
+                $config = require $configDir . '/server.php';
+                $app = $config['app_factory']();
                 $app->install();
             });
             break;
@@ -128,7 +128,7 @@ switch ($inputs[0]) {
             // vendor autoload
             require $currentDir . '/vendor/autoload.php';
             require __DIR__ . '/NginxBuilder.php';
-            $config = require $configDir . '/serverConfig.php';
+            $config = require $configDir . '/server.php';
             (new NginxBuilder($currentDir, $params, $config))->build();
             break;
         }

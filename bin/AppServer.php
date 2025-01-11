@@ -1,6 +1,6 @@
 <?php
 
-use Application\App;
+use Fluffy\Domain\App\BaseApp;
 use Fluffy\Domain\Message\HttpContext;
 use Fluffy\Services\UtilsService;
 use Fluffy\Swoole\Message\SwooleHttpRequest;
@@ -18,7 +18,7 @@ class AppServer
 {
     const PING_DELAY_MS = 25000;
     public Server $server;
-    public App $app;
+    public BaseApp $app;
     public Table $crontabTable;
     public Table $syncTable;
     public Table $timeTable;
@@ -34,12 +34,11 @@ class AppServer
      * 
      * @param int|string $port 
      * @param array $config 
-     * @param callable $workerAction 
      * @return void 
      */
-    public function __construct(private $port, private $config, private $workerAction) {}
+    public function __construct(private $port, private $config) {}
 
-    public function setApp(App $app)
+    public function setApp(BaseApp $app)
     {
         // var_dump(isset($this->app));
         $workerId = $this->server->getWorkerId();
@@ -150,7 +149,19 @@ class AppServer
             $workerType = $server->taskworker ? 'Task' : 'Request';
             $this->uniqueId = UtilsService::randomString(8);
             // var_dump(get_included_files());
-            ($this->workerAction)($this);
+
+            // you have autoload here
+            if (!isset($this->config['app_factory'])) {
+                throw new Exception("app_factory is not set in configs/server.php");
+            }
+            /**
+             * @var BaseApp $app
+             */
+            $app = $this->config['app_factory']();
+            $app->setUp();
+            $app->setAppDependencies($this);
+            $this->setApp($app);
+
             // Swoole\Timer::tick(5000, function () use ($workerId, $workerType) {
             //     echo "Memory usage $workerType $workerId: " . memory_get_usage(true) . "\n";
             // });

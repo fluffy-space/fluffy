@@ -47,11 +47,9 @@ class BaseStartUp implements IStartUp
     protected \Viewi\App $viewiApp;
     protected Config $config;
 
-    public function __construct(protected string $appDir)
-    {
-    }
+    public function __construct(protected string $appDir) {}
 
-    public function configureDb(IServiceProvider $serviceProvider): void { }
+    public function configureDb(IServiceProvider $serviceProvider): void {}
 
     function configureServices(IServiceProvider $serviceProvider): void
     {
@@ -60,7 +58,7 @@ class BaseStartUp implements IStartUp
         $serviceProvider->addSingleton(RateLimitService::class);
         $serviceProvider->addSingleton(HubServer::class);
         $this->config = new Config();
-        $this->config->addArray(require($this->appDir . '/config.php'));
+        $this->config->addArray(require($this->appDir . '/../configs/app.php'));
         $serviceProvider->setSingleton(Config::class, $this->config);
         $serviceProvider->addSingleton(IMapper::class, StdMapper::class);
         $serviceProvider->addScoped(BasePostgresqlRepository::class);
@@ -70,15 +68,10 @@ class BaseStartUp implements IStartUp
         $serviceProvider->addScoped(SessionService::class);
         $serviceProvider->addScoped(AuthorizationService::class);
 
-        $pool = new RedisPool((new RedisConfig)
-            ->withHost('127.0.0.1')
-            ->withPort(6379)
-            ->withAuth('')
-            ->withDbIndex($this->config->values['redisDbIndex'])
-            ->withTimeout(1));
-        $serviceProvider->setSingleton(RedisPool::class, $pool);
-
-        $this->viewiApp = include $this->appDir . '/../viewi-app/viewi.php';
+        if (!isset($this->config->values['viewi_path'])) {
+            throw new Exception("Viewi application could not be found. configs/app.php key 'viewi_path'.");
+        }
+        $this->viewiApp = include $this->config->values['viewi_path'];
         $serviceProvider->setSingleton(\Viewi\App::class, $this->viewiApp);
         $serviceProvider->setSingleton(\Viewi\Router\Router::class, $this->viewiApp->router());
 

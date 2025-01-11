@@ -1,26 +1,16 @@
 <?php
 
-use Application\App;
-use Application\StartUp;
-use Swoole\Constant;
-
 $currentDir = getcwd();
 
 require __DIR__ . '/AppServer.php';
-$config = require $currentDir . '/configs/serverConfig.php';
+$config = require $currentDir . '/configs/server.php';
 
 $config['BASE_DIR'] = $currentDir;
 $config['HOST_CONFIG'] = ['BASE_DIR' => __DIR__];
-$port = $config[Constant::OPTION_PORT] ?? (getenv('PORT') ?: 8101);
+$port = $config['port'] ?? (getenv('PORT') ?: 8101);
 
 
-$appServer = new AppServer($port, $config, function (AppServer $appServer) {
-    // you have autoload here
-    $app = new App(new StartUp());
-    $app->setUp();    
-    $app->setAppDependencies($appServer);
-    $appServer->setApp($app);
-});
+$appServer = new AppServer($port, $config);
 $appServer->run();
 
 // Get processes list:

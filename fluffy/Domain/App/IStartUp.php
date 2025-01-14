@@ -17,5 +17,5 @@ interface IStartUp
      * @throws ReflectionException 
      * @throws Exception 
      */
-    function buildDependencies();
+    function buildDependencies(IServiceProvider $serviceProvider);
 }

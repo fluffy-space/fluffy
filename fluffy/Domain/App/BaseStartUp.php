@@ -44,7 +44,6 @@ use Viewi\Engine;
 
 class BaseStartUp implements IStartUp
 {
-    protected \Viewi\App $viewiApp;
     protected Config $config;
 
     public function __construct(protected string $appDir) {}
@@ -67,14 +66,6 @@ class BaseStartUp implements IStartUp
         $serviceProvider->addScoped(IConnector::class, PostgreSQLConnector::class);
         $serviceProvider->addScoped(SessionService::class);
         $serviceProvider->addScoped(AuthorizationService::class);
-
-        if (!isset($this->config->values['viewi_path'])) {
-            throw new Exception("Viewi application could not be found. configs/app.php key 'viewi_path'.");
-        }
-        $this->viewiApp = include $this->config->values['viewi_path'];
-        $serviceProvider->setSingleton(\Viewi\App::class, $this->viewiApp);
-        $serviceProvider->setSingleton(\Viewi\Router\Router::class, $this->viewiApp->router());
-
         $serviceProvider->addScoped(SwooleRedisConnector::class);
         $serviceProvider->addScoped(UserRepository::class);
         $serviceProvider->addScoped(SessionRepository::class);
@@ -97,16 +88,11 @@ class BaseStartUp implements IStartUp
 
     function configure(BaseApp $app)
     {
-        // routes handler
-        $app->use(RoutingMiddleware::class);
         $serviceProvider = $app->getProvider();
-        [$router, $mapper] = [$serviceProvider->get(\Viewi\Router\Router::class), $serviceProvider->get(IMapper::class)];
+        $viewiApp = $serviceProvider->get(\Viewi\App::class);
+        [$router, $mapper] = [$viewiApp->router(), $serviceProvider->get(IMapper::class)];
         RoutingMiddleware::setUpStatic($router, $mapper);
         // Viewi bridge
-        /**
-         * @var App $viewiApp
-         */
-        $viewiApp = $serviceProvider->get(App::class);
         $bridge = new ViewiFluffyBridge($serviceProvider);
         $viewiApp->factory()->add(IViewiBridge::class, static function (Engine $engine) use ($bridge) {
             return $bridge;
@@ -119,8 +105,9 @@ class BaseStartUp implements IStartUp
      * @throws ReflectionException 
      * @throws Exception 
      */
-    function buildDependencies()
+    function buildDependencies(IServiceProvider $serviceProvider)
     {
-        echo $this->viewiApp->build();
+        $viewiApp = $serviceProvider->get(\Viewi\App::class);
+        echo $viewiApp->build();
     }
 }

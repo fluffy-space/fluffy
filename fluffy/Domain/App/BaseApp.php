@@ -5,6 +5,7 @@ namespace Fluffy\Domain\App;
 use AppServer;
 use DotDi\DependencyInjection\IServiceProvider;
 use DotDi\DependencyInjection\ServiceProvider;
+use Exception;
 use Fluffy\Domain\CronTab\CronTab;
 use Fluffy\Domain\Hubs\HubRunner;
 use Fluffy\Domain\Hubs\Hubs;
@@ -31,6 +32,8 @@ abstract class BaseApp
         $this->serviceProvider = new ServiceProvider();
     }
 
+    abstract function getViewiApp(): \Viewi\App;
+
     /**
      * Prepare application instance for long lifetime cycle (ReactPHP, Swoole)
      * @return void 
@@ -38,7 +41,7 @@ abstract class BaseApp
     function build()
     {
         $this->setUp();
-        $this->startUp->buildDependencies();
+        $this->startUp->buildDependencies($this->serviceProvider);
     }
 
     /**
@@ -124,6 +127,12 @@ abstract class BaseApp
     function setUp()
     {
         // start up and configure
+        $viewiApp = $this->getViewiApp();
+        if (!isset($viewiApp)) {
+            throw new Exception("Viewi application is not set: viewiApp.");
+        }
+        $this->serviceProvider->setSingleton(\Viewi\App::class, $viewiApp);
+        $this->serviceProvider->setSingleton(\Viewi\Router\Router::class, $viewiApp->router());
         $this->startUp->configureServices($this->serviceProvider);
         $this->startUp->configure($this);
         $this->middlewareCount = count($this->middleware);

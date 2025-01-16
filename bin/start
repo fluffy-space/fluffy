@@ -51,7 +51,7 @@ switch ($inputs[0]) {
     case 'migrate': {
             // vendor autoload
             require $currentDir . '/vendor/autoload.php';
-            run(function () use ($params) {
+            run(function () use ($params, $configDir) {
                 $command = $params[0] ?? 'migrate';
                 switch ($command) {
                     case 'migrate': {

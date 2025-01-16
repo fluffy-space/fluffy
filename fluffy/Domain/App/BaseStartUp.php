@@ -31,6 +31,8 @@ use Fluffy\Data\Repositories\UserTokenRepository;
 use Fluffy\Data\Repositories\UserVerificationCodeRepository;
 use Fluffy\Domain\App\IStartUp;
 use Fluffy\Domain\Viewi\ViewiFluffyBridge;
+use Fluffy\Migrations\BaseMigrationsContext;
+use Fluffy\Migrations\IMigrationsContext;
 use Fluffy\Swoole\Cache\CacheManager;
 use Fluffy\Swoole\RateLimit\RateLimitService;
 use Fluffy\Swoole\Task\TaskManager;
@@ -45,10 +47,35 @@ use Viewi\Engine;
 class BaseStartUp implements IStartUp
 {
     protected Config $config;
+    /**
+     * 
+     * @var IStartUp[]
+     */
+    protected array $startUps = [];
+    /**
+     * 
+     * @var string[]
+     */
+    protected array $startUpModules = [];
 
     public function __construct(protected string $appDir) {}
 
-    public function configureDb(IServiceProvider $serviceProvider): void {}
+    /**
+     * 
+     * @param string|IStartUp $module 
+     * @return void 
+     */
+    public function useStartUp($startUp)
+    {
+        $this->startUpModules[] = $startUp;
+    }
+
+    public function configureDb(IServiceProvider $serviceProvider): void
+    {
+        foreach ($this->startUps as $startUp) {
+            $startUp->configureDb($serviceProvider);
+        }
+    }
 
     function configureServices(IServiceProvider $serviceProvider): void
     {
@@ -74,16 +101,30 @@ class BaseStartUp implements IStartUp
         $serviceProvider->addScoped(UserVerificationCodeRepository::class);
         /** @insert **/
         // !Do not delete the line above!
+        foreach ($this->startUpModules as $startUpClass) {
+            $this->startUps[] = new $startUpClass();
+        }
+
+        foreach ($this->startUps as $startUp) {
+            $startUp->configureServices($serviceProvider);
+        }
     }
 
     function configureMigrations(IServiceProvider $serviceProvider): void
     {
         ServiceProviderHelper::discover($serviceProvider, [CoreMigrationsMark::folder()]);
+        $serviceProvider->addScoped(IMigrationsContext::class, BaseMigrationsContext::class);
+        foreach ($this->startUps as $startUp) {
+            $startUp->configureMigrations($serviceProvider);
+        }
     }
 
     function configureInstallDependencies(IServiceProvider $serviceProvider): void
     {
         ServiceProviderHelper::discover($serviceProvider, [CoreMigrationsMark::folder()]);
+        foreach ($this->startUps as $startUp) {
+            $startUp->configureInstallDependencies($serviceProvider);
+        }
     }
 
     function configure(BaseApp $app)
@@ -97,6 +138,9 @@ class BaseStartUp implements IStartUp
         $viewiApp->factory()->add(IViewiBridge::class, static function (Engine $engine) use ($bridge) {
             return $bridge;
         });
+        foreach ($this->startUps as $startUp) {
+            $startUp->configure($app);
+        }
     }
 
     /**
@@ -109,5 +153,8 @@ class BaseStartUp implements IStartUp
     {
         $viewiApp = $serviceProvider->get(\Viewi\App::class);
         echo $viewiApp->build();
+        foreach ($this->startUps as $startUp) {
+            $startUp->buildDependencies($serviceProvider);
+        }
     }
 }

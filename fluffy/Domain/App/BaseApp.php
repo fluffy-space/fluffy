@@ -16,6 +16,7 @@ use Fluffy\Domain\Message\HttpRequest;
 use Fluffy\Domain\Message\HttpResponse;
 use Fluffy\Domain\Message\SocketMessage;
 use Fluffy\Migrations\BaseMigrationsContext;
+use Fluffy\Migrations\IMigrationsContext;
 use Fluffy\Swoole\Task\TaskManager;
 use Fluffy\Swoole\Task\TaskMessage;
 use Throwable;
@@ -56,9 +57,11 @@ abstract class BaseApp
         $scope = $this->serviceProvider->createScope();
         try {
             // create request and http context
-            /** @var BaseMigrationsContext $migrationsContext */
-            $migrationsContext = $scope->serviceProvider->get(BaseMigrationsContext::class);
-            $migrationsContext->run();
+            /** @var IMigrationsContext[] $migrationsContexts */
+            $migrationsContexts = $scope->serviceProvider->getAll(IMigrationsContext::class);
+            foreach ($migrationsContexts as $migrationsContext) {
+                $migrationsContext->run();
+            }
         } finally {
             $scope->dispose();
         }
@@ -134,6 +137,7 @@ abstract class BaseApp
         $this->serviceProvider->setSingleton(\Viewi\App::class, $viewiApp);
         $this->serviceProvider->setSingleton(\Viewi\Router\Router::class, $viewiApp->router());
         $this->startUp->configureServices($this->serviceProvider);
+        $this->startUp->configureDb($this->serviceProvider);
         $this->startUp->configure($this);
         $this->middlewareCount = count($this->middleware);
     }

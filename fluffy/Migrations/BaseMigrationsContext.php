@@ -9,11 +9,9 @@ use Fluffy\Migrations\Auth\UserTokenMigration;
 use Fluffy\Migrations\Auth\UserVerificationCodeMigration;
 use Fluffy\Migrations\InstallMigration;
 
-class BaseMigrationsContext
+class BaseMigrationsContext implements IMigrationsContext
 {
-    public function __construct(protected Container $container)
-    {
-    }
+    public function __construct(protected Container $container) {}
 
     public function run()
     {

@@ -9,16 +9,14 @@ use Throwable;
 
 abstract class BaseMigration
 {
-    function __construct(protected MigrationRepository $MigrationHistoryRepository)
-    {
-    }
+    function __construct(protected MigrationRepository $MigrationHistoryRepository) {}
 
     public abstract function up();
     public abstract function down();
 
     public function migrationName()
     {
-        return str_replace(__NAMESPACE__ . '\\', '', static::class);
+        return static::class;
     }
 
     public function runUp()

@@ -114,7 +114,11 @@ class DbContext
 
         $select = '';
         $comma = '';
-        foreach ($entityMap::Columns() as $property => $_) {
+        $columns = $entityMap::Columns();
+        if ($query->selectColumns !== null) {
+            $columns = array_flip($query->selectColumns);
+        }
+        foreach ($columns as $property => $_) {
             $select .= "$comma\"{$property}\"";
             $comma = ', ';
         }

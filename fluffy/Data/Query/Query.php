@@ -10,6 +10,7 @@ class Query
     public array $orderBys = [];
     public array $joins = [];
     public array $includes = [];
+    public ?array $selectColumns = null;
     public int $page = -1;
     public int $take = -1;
     public int $skip = 0;
@@ -133,6 +134,12 @@ class Query
         $this->firstOrDefault = true;
         $this->skip = 0;
         $this->take = 1;
+        return $this;
+    }
+
+    public function select(?array $columns = null): self
+    {
+        $this->selectColumns = $columns;
         return $this;
     }
 }

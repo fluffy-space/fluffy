@@ -98,7 +98,9 @@ class RoutingMiddleware implements IMiddleware
             }
             $response = $instance->$method(...$inputs);
         } elseif ($action instanceof ComponentRoute) {
-            $request = new Request($this->httpContext->request->uri, $this->httpContext->request->method);
+            $query = $this->httpContext->request->query;
+            $queryStr = $query ? http_build_query($query) : '';
+            $request = new Request($this->httpContext->request->uri . ($queryStr ? "?$queryStr" : ""), $this->httpContext->request->method);
             /**
              * @var App $viewiApp
              */

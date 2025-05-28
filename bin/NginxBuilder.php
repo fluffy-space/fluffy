@@ -18,7 +18,7 @@ class NginxBuilder
         if (count($this->inputs) == 0) {
             die('[NginxBuilder] Too few parameters, expected domain name.' . PHP_EOL);
         }
-        $port = $this->serverConfig[Constant::OPTION_PORT] ?? 8101;
+        $port = $this->serverConfig['port'] ?? 8101;
         $domain = $this->inputs[0];
         $rootPath = realpath($this->serverConfig['swoole'][Constant::OPTION_DOCUMENT_ROOT]);
         if (!file_exists($this->serverConfig['static_files'])) {

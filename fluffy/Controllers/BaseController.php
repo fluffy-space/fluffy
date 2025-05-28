@@ -42,7 +42,7 @@ class BaseController
         ])->WithCode(400);
     }
 
-    public function TooManyRequests(string $message = null, ?array $errors = null)
+    public function TooManyRequests(?string $message = null, ?array $errors = null)
     {
         return ResponseBuilder::Json([
             "message" => $message ?? "Too Many Requests",

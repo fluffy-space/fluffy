@@ -140,7 +140,7 @@ class Watcher
         }
     }
 
-    private function onNotify()
+    public function onNotify()
     {
         $events = inotify_read($this->watchStreamResource);
         $refresh = false;

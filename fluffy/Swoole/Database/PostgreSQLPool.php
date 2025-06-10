@@ -7,10 +7,11 @@ use RuntimeException;
 use Swoole\ConnectionPool;
 use Swoole\Coroutine\PostgreSQL;
 
-class PostgreSQLPool extends ConnectionPool
+class PostgreSQLPool extends PostgreSqlConnectionPool implements IPostgresqlPool
 {
     public function __construct(private Config $config, int $size = self::DEFAULT_SIZE)
     {
+        
         parent::__construct(function () {
             $connection = new PostgreSQL();
             $pgConfig = $this->config->values['postgresql'];
@@ -20,10 +21,5 @@ class PostgreSQLPool extends ConnectionPool
             }
             return $connection;
         }, $size);
-    }
-
-    public function getUserName()
-    {
-        return $this->config->values['postgresql']['user'];
     }
 }

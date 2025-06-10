@@ -14,9 +14,7 @@ class SessionService
     protected ?string $SID;
     protected ?SessionEntity $SessionEntity;
 
-    public function __construct(private ?HttpContext $httpContext, private SessionRepository $sessionRepository)
-    {
-    }
+    public function __construct(private ?HttpContext $httpContext, private SessionRepository $sessionRepository) {}
 
     public function getSession(): ?SessionEntity
     {

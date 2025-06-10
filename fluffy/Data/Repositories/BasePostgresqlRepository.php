@@ -67,7 +67,6 @@ class BasePostgresqlRepository
         bool $returnCount = true,
         ?array $aggregate = null
     ) {
-        $pg = $this->connector->get();
 
         $select = '';
         $comma = '';
@@ -83,7 +82,7 @@ class BasePostgresqlRepository
             $orderGlue = ', ';
         }
 
-        $wherePart = $this->buildWhere($where, $pg);
+        $wherePart = $this->buildWhere($where);
         if ($wherePart) {
             $wherePart = "WHERE $wherePart";
         }
@@ -96,23 +95,14 @@ class BasePostgresqlRepository
         if ($size !== 0) {
             $sql = "SELECT $select FROM {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" $wherePart $orderBy $limit";
             // var_dump([$sql, $where]);
-            $stmt = $pg->query($sql);
-            if (!$stmt) {
-                // print_r([$stmt, $pg]);
-                throw new RuntimeException("{$pg->error} {$pg->errCode}");
-            }
-            $arr = $stmt->fetchAll(SW_PGSQL_ASSOC);
+            $arr = $this->connector->query($sql);
             $list = $arr ? array_map(fn($row) => $row ? $this->mapper->mapAssoc($this->entityType, $row) : null, $arr) : [];
         }
         $result = ['list' => $list];
         if ($returnCount) {
             $countSql = "SELECT COUNT(*) as \"count\" FROM {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" $wherePart";
-            $stmt = $pg->query($countSql);
-            if (!$stmt) {
-                throw new RuntimeException("{$pg->error} {$pg->errCode}");
-            }
-            $arr = $stmt->fetchAssoc();
-            $result['total'] = $arr['count'];
+            $arr = $this->connector->query($countSql);
+            $result['total'] = $arr[0]['count'];
         }
         if ($aggregate !== null) {
             $aggregateSql = '';
@@ -123,17 +113,13 @@ class BasePostgresqlRepository
             }
             $countSql = "SELECT $aggregateSql FROM {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" $wherePart";
             // print_r([$countSql]);
-            $stmt = $pg->query($countSql);
-            if (!$stmt) {
-                throw new RuntimeException("{$pg->error} {$pg->errCode}");
-            }
-            $arr = $stmt->fetchAssoc();
-            $result['aggregate'] = $arr;
+            $arr = $this->connector->query($countSql);
+            $result['aggregate'] = $arr[0];
         }
         return $result;
     }
 
-    public function buildWhere(array $where, PostgreSQL $pg, string $concatOperator = "AND"): string
+    public function buildWhere(array $where, string $concatOperator = "AND"): string
     {
         $wherePart = '';
         $whereGlue = '';
@@ -142,10 +128,10 @@ class BasePostgresqlRepository
             $orOperator = is_array($column);
             if ($orOperator) {
                 $total = count($condition);
-                $wherePart .= $whereGlue . ($total > 1 ? '(' : '') . $this->buildWhere($condition, $pg, 'OR') . ($total > 1 ? ')' : '');
+                $wherePart .= $whereGlue . ($total > 1 ? '(' : '') . $this->buildWhere($condition, 'OR') . ($total > 1 ? ')' : '');
             } else {
                 $hasOperator = isset($condition[2]);
-                $value = $this->buildValue($hasOperator ? $condition[2] : $condition[1], $pg);
+                $value = $this->buildValue($hasOperator ? $condition[2] : $condition[1]);
                 $operator = $hasOperator ? $condition[1] : '=';
 
                 $wherePart .= $whereGlue . "\"$column\" $operator $value";
@@ -155,7 +141,7 @@ class BasePostgresqlRepository
         return $wherePart;
     }
 
-    public function buildValue($value, PostgreSQL $pg)
+    public function buildValue($value)
     {
         if (is_bool($value)) {
             $value = $value ? 'true' : 'false';
@@ -166,9 +152,9 @@ class BasePostgresqlRepository
         } else if (is_float($value)) {
             $value = number_format($value, 8, '.', '');
         } else if (is_array($value)) {
-            $value = "(" . implode(", ", array_map(fn($x) => $this->buildValue($x, $pg, ""), $value)) . ")";
+            $value = "(" . implode(", ", array_map(fn($x) => $this->buildValue($x, ""), $value)) . ")";
         } else {
-            $value = $pg->escapeLiteral($value);
+            $value = $this->connector->escapeLiteral($value);
         }
         return $value;
     }
@@ -179,8 +165,6 @@ class BasePostgresqlRepository
         ?string $ordering = BaseEntityMap::PROPERTY_CreatedOn,
         int $order = 1, // -1 DESC
     ) {
-        $pg = $this->connector->get();
-
         $select = '';
         $comma = '';
         foreach ($this->entityMap::Columns() as $property => $_) {
@@ -194,26 +178,16 @@ class BasePostgresqlRepository
             $limit = "LIMIT $size OFFSET $offset";
         }
         $sql = "SELECT $select FROM {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" $orderBy $limit";
-        $stmt = $pg->query($sql);
-        if (!$stmt) {
-            throw new RuntimeException("{$pg->error} {$pg->errCode}");
-        }
-        $arr = $stmt->fetchAll(SW_PGSQL_ASSOC);
+        $arr = $this->connector->query($sql);
         $list = $arr ? array_map(fn($row) => $row ? $this->mapper->mapAssoc($this->entityType, $row) : null, $arr) : [];
         $countSql = "SELECT COUNT(*) as \"count\" FROM {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\"";
-        $stmt = $pg->query($countSql);
-        if (!$stmt) {
-            throw new RuntimeException("{$pg->error} {$pg->errCode}");
-        }
-        $arr = $stmt->fetchAssoc();
-        $count = $arr['count'];
+        $arr = $this->connector->query($countSql);
+        $count = $arr[0]['count'];
         return ['list' => $list, 'total' => $count];
     }
 
     public function getById($Id): ?BaseEntity
     {
-        $pg = $this->connector->get();
-
         $select = '';
         $comma = '';
         foreach ($this->entityMap::Columns() as $property => $_) {
@@ -224,12 +198,8 @@ class BasePostgresqlRepository
         $primaryKeyCondition = "\"{$keyName}\" = $Id";
 
         $sql = "SELECT $select FROM {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" WHERE $primaryKeyCondition";
-        $stmt = $pg->query($sql);
-        if (!$stmt) {
-            throw new RuntimeException("{$pg->error} {$pg->errCode}");
-        }
-        $arr = $stmt->fetchAssoc();
-        $entity = $arr ? $this->mapper->mapAssoc($this->entityType, $arr) : null;
+        $arr = $this->connector->query($sql);
+        $entity = isset($arr[0]) ? $this->mapper->mapAssoc($this->entityType, $arr[0]) : null;
         return $entity;
     }
 
@@ -252,24 +222,18 @@ class BasePostgresqlRepository
             $select .= "$comma\"{$property}\"";
             $comma = ', ';
         }
-        $pg = $this->connector->get();
         if (is_array($findKey)) {
-            $wherePart = $this->buildWhere($findKey, $pg);
+            $wherePart = $this->buildWhere($findKey);
             if ($wherePart) {
                 $wherePart = "WHERE $wherePart";
             }
         } else {
-            $wherePart = "WHERE \"{$findKey}\" = {$pg->escapeLiteral($value)}";
+            $wherePart = "WHERE \"{$findKey}\" = {$this->connector->escapeLiteral($value)}";
         }
         $sql = "SELECT $select FROM {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" $wherePart";
         // echo $sql . PHP_EOL;
-        $stmt = $pg->query($sql);
-        if (!$stmt) {
-            // print_r([$stmt, $pg]);
-            throw new RuntimeException("{$pg->error} {$pg->errCode}");
-        }
-        $arr = $stmt->fetchAssoc();
-        $entity = $arr ? $this->mapper->mapAssoc($this->entityType, $arr) : null;
+        $arr = $this->connector->query($sql);
+        $entity = isset($arr[0]) ? $this->mapper->mapAssoc($this->entityType, $arr[0]) : null;
         return $entity;
     }
 
@@ -282,7 +246,6 @@ class BasePostgresqlRepository
         $entity->CreatedOn = $now;
         $entity->UpdatedOn = $now;
         $keyName = $this->entityMap::$PrimaryKeys[0];
-        $pg = $this->connector->get();
         foreach ($this->entityMap::Columns() as $property => $columnMeta) {
             if ($property !== $keyName) {
                 $columns .= "$comma\"{$property}\"";
@@ -298,7 +261,7 @@ class BasePostgresqlRepository
                 } elseif ($columnMeta['type'] === 'bytea') {
                     $value = "decode('" . bin2hex($entity->{$property}) . "', 'hex')";
                 } else {
-                    $value = $pg->escapeLiteral($entity->{$property});
+                    $value = $this->connector->escapeLiteral($entity->{$property});
                 }
                 $values .= "$comma{$value}";
                 $comma = ', ';
@@ -307,13 +270,9 @@ class BasePostgresqlRepository
         $sql = "INSERT INTO {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" (" . PHP_EOL . '    ' . $columns . PHP_EOL . ')';
         $sql .= '    VALUES' . PHP_EOL . "($values) RETURNING \"$keyName\";";
         // echo $sql . PHP_EOL;
-        $stmt = $pg->query($sql);
-        if (!$stmt) {
-            throw new RuntimeException("{$pg->error} {$pg->errCode}");
-        }
-        $arr = $stmt->fetchAssoc();
-        if ($arr) {
-            $entity->Id = $arr[$keyName];
+        $arr = $this->connector->query($sql);
+        if (isset($arr[0])) {
+            $entity->Id = $arr[0][$keyName];
             return true;
         }
         return false;
@@ -326,7 +285,6 @@ class BasePostgresqlRepository
         $now = self::getTime();
         $entity->UpdatedOn = $now;
         $keyName = $this->entityMap::$PrimaryKeys[0];
-        $pg = $this->connector->get();
         $hasCustom = $columnsToUpdate !== null;
         if ($hasCustom) {
             $columnsToUpdate[] = 'UpdatedOn';
@@ -349,7 +307,7 @@ class BasePostgresqlRepository
                 } elseif ($columnMeta['type'] === 'bytea') {
                     $value = "decode('" . bin2hex($entity->{$property}) . "', 'hex')";
                 } else {
-                    $value = $pg->escapeLiteral($entity->{$property});
+                    $value = $this->connector->escapeLiteral($entity->{$property});
                 }
                 $columns .= "$comma\"{$property}\" = $value";
                 $comma = ', ';
@@ -359,11 +317,8 @@ class BasePostgresqlRepository
         $sql = "UPDATE {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" SET " . PHP_EOL . '    ' . $columns . PHP_EOL . " $where;";
         // echo $sql . PHP_EOL;
         // return true;
-        $stmt = $pg->query($sql);
-        if (!$stmt) {
-            throw new RuntimeException("{$pg->error} {$pg->errCode}");
-        }
-        $arr = $stmt->affectedRows();
+        $this->connector->query($sql);
+        $arr = $this->connector->affectedRows();
         if ($arr) {
             return true;
         }
@@ -373,41 +328,32 @@ class BasePostgresqlRepository
     public function delete(BaseEntity $entity)
     {
         $keyName = $this->entityMap::$PrimaryKeys[0];
-        $pg = $this->connector->get();
         $where = "WHERE \"{$this->entityMap::$Table}\".\"$keyName\" = {$entity->Id}";
         $sql = "DELETE FROM {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" $where;";
         // echo $sql . PHP_EOL;
         // return true;
-        $stmt = $pg->query($sql);
-        if (!$stmt) {
-            throw new RuntimeException("{$pg->error} {$pg->errCode}");
-        }
-        $arr = $stmt->affectedRows();
+        $this->connector->query($sql);
+        $arr = $this->connector->affectedRows();
         if ($arr) {
             return true;
         }
         return false;
     }
 
-    public function metaData()
-    {
-        $pg = $this->connector->get();
-        return $pg->metaData($this->entityMap::$Table);
-    }
+    // public function metaData()
+    // {
+    //     $pg = $this->connector->get();
+    //     return $pg->metaData($this->entityMap::$Table);
+    // }
 
     public function dropTable(bool $cascade, bool $ifExists): bool
     {
         $tableName = $this->entityMap::$Table;
         $schema = $this->entityMap::$Schema;
-        $pg = $this->connector->get();
         $cascadeSql = $cascade ? ' CASCADE' : '';
         $ifExistsSql = $ifExists ? ' IF EXISTS' : '';
         $sql = "DROP TABLE$ifExistsSql $schema.\"$tableName\"$cascadeSql";
-        $stmt = $pg->query($sql);
-        if (!$stmt) {
-            throw new RuntimeException("{$pg->error} {$pg->errCode}");
-        }
-        // $arr = $stmt->fetchAssoc();
+        $this->connector->query($sql);
         return true;
     }
 
@@ -419,7 +365,6 @@ class BasePostgresqlRepository
         $schema = $this->entityMap::$Schema;
         $columns = '';
         $comma = '';
-        $pg = $this->connector->get();
         foreach ($columnsSchema as $property => $columnMeta) {
             $dataType = $columnMeta['type'];
             if (isset($columnMeta['length'])) {
@@ -442,11 +387,7 @@ class BasePostgresqlRepository
         $columns;
         EOD;
 
-        $stmt = $pg->query($sql);
-        if (!$stmt) {
-            throw new RuntimeException("{$pg->error} {$pg->errCode}");
-        }
-        // $arr = $stmt->fetchAssoc();
+        $this->connector->query($sql);
         return true;
     }
 
@@ -478,11 +419,7 @@ class BasePostgresqlRepository
             EOD;
             $indexes .= $comma . $indexSql;
         }
-        $pg = $this->connector->get();
-        $stmt = $pg->query($indexes);
-        if (!$stmt) {
-            throw new RuntimeException("{$pg->error} {$pg->errCode}");
-        }
+        $this->connector->query($indexes);
         return true;
     }
 
@@ -500,8 +437,7 @@ class BasePostgresqlRepository
         $schema = $this->entityMap::$Schema;
         $columns = '';
         $comma = '';
-        $dbUserName = $this->connector->getPool()->getUserName();
-        $pg = $this->connector->get();
+        $dbUserName = $this->connector->getUserName();
         foreach ($columnsSchema ?? $this->entityMap::Columns() as $property => $columnMeta) {
             $dataType = $columnMeta['type'];
             if (isset($columnMeta['length'])) {
@@ -545,7 +481,7 @@ class BasePostgresqlRepository
         // }
 
         $comma = PHP_EOL . PHP_EOL;
-        $indexes = '';
+        $indexes = [];
         foreach ($indexesSchema ?? $this->entityMap::$Indexes as $name => $indexMeta) {
             $indexName = "{$tableName}_$name";
             $unique = '';
@@ -563,7 +499,7 @@ class BasePostgresqlRepository
                 ON $schema."$tableName" USING btree
                 ($indexColumns);
             EOD;
-            $indexes .= $comma . $indexSql;
+            $indexes[] = $indexSql;
         }
         $foreignKeys = '';
         $comma = ',' . PHP_EOL . '    ';
@@ -617,18 +553,16 @@ class BasePostgresqlRepository
         (
             $columns{$pk}{$constrains}{$foreignKeys}
         );
-        
-        ALTER TABLE IF EXISTS $schema."$tableName"
-            OWNER to "$dbUserName";        
-        $indexes
         EOD;
-        // echo $sql . PHP_EOL;
-        // return true;
-        $stmt = $pg->query($sql);
-        if (!$stmt) {
-            throw new RuntimeException("{$pg->error} {$pg->errCode}");
+        $this->connector->query($sql);
+        $sql = <<<EOD
+        ALTER TABLE IF EXISTS $schema."$tableName"
+            OWNER to "$dbUserName"; 
+        EOD;
+        $this->connector->query($sql);
+        foreach ($indexes as $indexQuery) {
+            $this->connector->query($indexQuery);
         }
-        // $arr = $stmt->fetchAssoc();
         return true;
     }
 
@@ -636,7 +570,6 @@ class BasePostgresqlRepository
     {
         $tableName = $this->entityMap::$Table;
         $schema = $this->entityMap::$Schema;
-        $pg = $this->connector->get();
         $sql = <<<EOD
         SELECT EXISTS (
                 SELECT FROM 
@@ -646,22 +579,12 @@ class BasePostgresqlRepository
                 tablename  = '$tableName'
         );
         EOD;
-        $stmt = $pg->query($sql);
-        if (!$stmt) {
-            throw new RuntimeException("{$pg->error} {$pg->errCode}");
-        }
-        $arr = $stmt->fetchAssoc();
-        return $arr['exists'];
+        $arr = $this->connector->query($sql);
+        return $arr[0]['exists'];
     }
 
     public function executeSQL(string $sqlScript)
     {
-        $pg = $this->connector->get();
-        $stmt = $pg->query($sqlScript);
-        if (!$stmt) {
-            throw new RuntimeException("{$pg->error} {$pg->errCode}");
-        }
-        $arr = $stmt->fetchAssoc();
-        return $arr;
+        return $this->connector->query($sqlScript);
     }
 }

@@ -24,9 +24,8 @@ use DotDi\DependencyInjection\IServiceProvider;
 use DotDi\DependencyInjection\ServiceProviderHelper;
 use ReflectionException;
 use Exception;
-use Swoole\Database\RedisConfig;
-use Swoole\Database\RedisPool;
-use Throwable;
+use Fluffy\Data\Connector\PostgreSqlClientConnector;
+use Fluffy\Data\Connector\PostgreSqlPDOConnector;
 use Fluffy\Data\Repositories\UserTokenRepository;
 use Fluffy\Data\Repositories\UserVerificationCodeRepository;
 use Fluffy\Domain\App\IStartUp;
@@ -34,10 +33,12 @@ use Fluffy\Domain\Viewi\ViewiFluffyBridge;
 use Fluffy\Migrations\BaseMigrationsContext;
 use Fluffy\Migrations\IMigrationsContext;
 use Fluffy\Swoole\Cache\CacheManager;
+use Fluffy\Swoole\Database\IPostgresqlPool;
+use Fluffy\Swoole\Database\PostgresPDOPool;
 use Fluffy\Swoole\RateLimit\RateLimitService;
 use Fluffy\Swoole\Task\TaskManager;
 use Fluffy\Swoole\Websocket\HubServer;
-use Viewi\App;
+use Swoole\Database\PDOConfig;
 use Viewi\Bridge\IViewiBridge;
 use Viewi\Engine;
 
@@ -79,6 +80,7 @@ class BaseStartUp implements IStartUp
 
     function configureServices(IServiceProvider $serviceProvider): void
     {
+        $swooleVersion = explode('.', phpversion('swoole') ?? '5')[0];
         $serviceProvider->addSingleton(TaskManager::class);
         $serviceProvider->addSingleton(CacheManager::class);
         $serviceProvider->addSingleton(RateLimitService::class);
@@ -89,8 +91,22 @@ class BaseStartUp implements IStartUp
         $serviceProvider->addSingleton(IMapper::class, StdMapper::class);
         $serviceProvider->addScoped(BasePostgresqlRepository::class);
         $serviceProvider->addScoped(DbContext::class);
-        $serviceProvider->addSingleton(PostgreSQLPool::class);
-        $serviceProvider->addScoped(IConnector::class, PostgreSQLConnector::class);
+        if ($swooleVersion === '5') {
+            $serviceProvider->addSingleton(IPostgresqlPool::class, PostgreSQLPool::class);
+            $serviceProvider->addScoped(IConnector::class, PostgreSqlClientConnector::class);
+        } else {
+            $pgConfig = $this->config->values['postgresql'];
+            $pgPool = new PostgresPDOPool((new PDOConfig)
+                    ->withDriver('pgsql')
+                    ->withHost($pgConfig['host'])
+                    ->withPort($pgConfig['port'])
+                    ->withDbName($pgConfig['dbname'])
+                    ->withUsername($pgConfig['user'])
+                    ->withPassword($pgConfig['password'])
+            );
+            $serviceProvider->setSingleton(IPostgresqlPool::class, $pgPool);
+            $serviceProvider->addScoped(IConnector::class, PostgreSqlPDOConnector::class);
+        }
         $serviceProvider->addScoped(SessionService::class);
         $serviceProvider->addScoped(AuthorizationService::class);
         $serviceProvider->addScoped(SwooleRedisConnector::class);

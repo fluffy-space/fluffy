@@ -28,20 +28,15 @@ class DbContext
 
     public function execute(Query $query)
     {
-        $pg = $this->connector->get();
         $entityMap = $query->entityTypeMap ?? EntitiesMap::$map[$query->entityType] ?? throw new Exception("{$query->entityType} has no registered entity map.");
-        $sqlQueries = $this->buildQuery($query, $pg, $entityMap);
+        $sqlQueries = $this->buildQuery($query, $entityMap);
         // print_r([$sqlQueries]);
         /**
          * @var BaseEntity[] $list
          */
         $list = [];
         if (isset($sqlQueries['list'])) {
-            $stmt = $pg->query($sqlQueries['list']);
-            if (!$stmt) {
-                throw new RuntimeException("{$pg->error} {$pg->errCode}");
-            }
-            $arr = $stmt->fetchAll(SW_PGSQL_ASSOC);
+            $arr = $this->connector->query($sqlQueries['list']);
             $list = $arr ? array_map(fn($row) => $row ? $this->mapper->mapAssoc($query->entityType, $row) : null, $arr) : [];
 
             // includes
@@ -91,12 +86,8 @@ class DbContext
             return $list ? $list[0] : null;
         }
         if (isset($sqlQueries['count'])) {
-            $stmt = $pg->query($sqlQueries['count']);
-            if (!$stmt) {
-                throw new RuntimeException("{$pg->error} {$pg->errCode}");
-            }
-            $arr = $stmt->fetchAssoc();
-            $result['total'] = $arr['count'];
+            $arr = $this->connector->query($sqlQueries['count']);
+            $result['total'] = $arr[0]['count'];
         }
 
         return $result;
@@ -109,7 +100,7 @@ class DbContext
      * @param BaseEntityMap|string $entityMap 
      * @return array 
      */
-    public function buildQuery(Query $query, PostgreSQL $pg, string $entityMap): array
+    public function buildQuery(Query $query, string $entityMap): array
     {
 
         $select = '';
@@ -130,7 +121,7 @@ class DbContext
             $orderGlue = ', ';
         }
 
-        $wherePart = $this->buildWhere($query->expressions, $pg);
+        $wherePart = $this->buildWhere($query->expressions);
         if ($wherePart) {
             $wherePart = "WHERE $wherePart";
         }
@@ -157,7 +148,7 @@ class DbContext
         return $queries;
     }
 
-    public function buildWhere(array $where, PostgreSQL $pg, string $concatOperator = "AND"): string
+    public function buildWhere(array $where, string $concatOperator = "AND"): string
     {
         $wherePart = '';
         $whereGlue = '';
@@ -166,10 +157,10 @@ class DbContext
             $orOperator = is_array($column);
             if ($orOperator) {
                 $total = count($condition);
-                $wherePart .= $whereGlue . ($total > 1 ? '(' : '') . $this->buildWhere($condition, $pg, 'OR') . ($total > 1 ? ')' : '');
+                $wherePart .= $whereGlue . ($total > 1 ? '(' : '') . $this->buildWhere($condition, 'OR') . ($total > 1 ? ')' : '');
             } else {
                 $hasOperator = isset($condition[2]);
-                $value = $this->buildValue($hasOperator ? $condition[2] : $condition[1], $pg);
+                $value = $this->buildValue($hasOperator ? $condition[2] : $condition[1]);
                 $operator = $hasOperator ? $condition[1] : '=';
 
                 $wherePart .= $whereGlue . "\"$column\" $operator $value";
@@ -179,7 +170,7 @@ class DbContext
         return $wherePart;
     }
 
-    public function buildValue($value, PostgreSQL $pg)
+    public function buildValue($value)
     {
         if (is_bool($value)) {
             $value = $value ? 'true' : 'false';
@@ -190,9 +181,9 @@ class DbContext
         } else if (is_float($value)) {
             $value = number_format($value, 8, '.', '');
         } else if (is_array($value)) {
-            $value = "(" . implode(", ", array_map(fn($x) => $this->buildValue($x, $pg, ""), $value)) . ")";
+            $value = "(" . implode(", ", array_map(fn($x) => $this->buildValue($x, ""), $value)) . ")";
         } else {
-            $value = $pg->escapeLiteral($value);
+            $value = $this->connector->escapeLiteral($value);
         }
         return $value;
     }

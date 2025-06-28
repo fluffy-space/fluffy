@@ -2,31 +2,52 @@
 
 namespace Fluffy\Data\Connector;
 
-use Fluffy\Swoole\Database\PostgreSQLPool;
 use DotDi\Interfaces\IDisposable;
-use Exception;
 use Fluffy\Domain\Configuration\Config;
 use Fluffy\Swoole\Database\IPostgresqlPool;
-use Fluffy\Swoole\Database\PostgreSqlConnectionPool;
-use PDO;
-use Swoole\ConnectionPool;
+use RuntimeException;
 use Swoole\Coroutine\PostgreSQL;
+use Swoole\Coroutine\PostgreSQLStatement;
 
 class PostgreSqlClientConnector implements IConnector, IDisposable
 {
     /**
      * 
-     * @var PostgreSQL|PDO
+     * @var PostgreSQL
      */
     private $pg;
+    /**
+     * 
+     * @var PostgreSQLStatement|false
+     */
+    private $lastStatement = false;
 
-    public function __construct(private IPostgresqlPool $connectionPool, private Config $config)
+    public function __construct(private IPostgresqlPool $connectionPool, private Config $config) {}
+
+    public function query(string $query, ?int $fetchMode = null): array
     {
+        $pg = $this->get();
+        $this->lastStatement = $pg->query($query);
+        if (!$this->lastStatement) {
+            throw new RuntimeException("{$pg->error} {$pg->errCode}");
+        }
+        $arr = $this->lastStatement->fetchAll(SW_PGSQL_ASSOC);
+        return $arr;
+    }
+
+    public function escapeLiteral($value): string
+    {
+        return $this->get()->escapeLiteral($value);
+    }
+
+    public function affectedRows(): int
+    {
+        return $this->lastStatement->affectedRows();
     }
 
     /**
      * 
-     * @return Swoole\Coroutine\PostgreSQL|PDO 
+     * @return PostgreSQL 
      */
     public function get()
     {
@@ -48,7 +69,7 @@ class PostgreSqlClientConnector implements IConnector, IDisposable
         }
     }
 
-        public function getUserName(): string
+    public function getUserName(): string
     {
         return $this->config->values['postgresql']['user'];
     }

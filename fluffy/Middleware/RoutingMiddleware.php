@@ -22,9 +22,7 @@ class RoutingMiddleware implements IMiddleware
     private static Router $router;
     private static IMapper $mapper;
 
-    public function __construct(private HttpContext $httpContext, private Container $container)
-    {
-    }
+    public function __construct(private HttpContext $httpContext, private Container $container) {}
 
     public static function setUpStatic(Router $router, IMapper $mapper)
     {
@@ -34,7 +32,9 @@ class RoutingMiddleware implements IMiddleware
 
     public function invoke()
     {
-        $match = self::$router->resolve($this->httpContext->request->uri, $this->httpContext->request->method);
+        $isHead = $this->httpContext->request->method === 'HEAD';
+        $targetMethod = $isHead ? 'GET' : $this->httpContext->request->method;
+        $match = self::$router->resolve($this->httpContext->request->uri, $targetMethod);
         if ($match === null) {
             throw new Exception('No route was matched!');
         }

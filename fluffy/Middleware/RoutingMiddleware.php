@@ -36,7 +36,7 @@ class RoutingMiddleware implements IMiddleware
         $isOptions = $this->httpContext->request->method === 'OPTIONS';
         if ($isOptions) {
             // check allowed methods
-            $allowed = [];
+            $allowed = ['OPTIONS'];
             foreach (['GET', 'POST', 'PUT', 'DELETE'] as $testMethod) {
                 if (self::$router->resolve($this->httpContext->request->uri, $testMethod)) {
                     $allowed[] = $testMethod;

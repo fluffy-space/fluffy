@@ -33,9 +33,28 @@ class RoutingMiddleware implements IMiddleware
     public function invoke()
     {
         $isHead = $this->httpContext->request->method === 'HEAD';
+        $isOptions = $this->httpContext->request->method === 'OPTIONS';
+        if ($isOptions) {
+            // check allowed methods
+            $allowed = [];
+            foreach (['GET', 'POST', 'PUT', 'DELETE'] as $testMethod) {
+                if (self::$router->resolve($this->httpContext->request->uri, $testMethod)) {
+                    $allowed[] = $testMethod;
+                    if ($testMethod === 'GET') {
+                        $allowed[] = 'HEAD';
+                    }
+                }
+            }
+            $this->httpContext->response->status = 204;
+            $this->httpContext->response->headers['Allow'] = implode(', ', $allowed);
+            return;
+        }
+
         $targetMethod = $isHead ? 'GET' : $this->httpContext->request->method;
         $match = self::$router->resolve($this->httpContext->request->uri, $targetMethod);
         if ($match === null) {
+            // print_r($this->httpContext->request);
+            // print_r(self::$router);
             throw new Exception('No route was matched!');
         }
         $params = $this->httpContext->request->query;

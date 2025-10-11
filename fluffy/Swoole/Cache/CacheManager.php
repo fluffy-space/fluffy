@@ -41,6 +41,14 @@ class CacheManager
         return $this->cacheItems[$key]->data;
     }
 
+    public function clearAll()
+    {
+        foreach ($this->appServer->syncTable as $key => $row) {
+            // print_r([$key, $row]);
+            $this->appServer->syncTable->incr($key, 'value');
+        }
+    }
+
     public function delete(string $key)
     {
         if ($this->appServer->syncTable->exists($key)) {

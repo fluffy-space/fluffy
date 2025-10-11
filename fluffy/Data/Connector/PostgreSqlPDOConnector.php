@@ -2,17 +2,12 @@
 
 namespace Fluffy\Data\Connector;
 
-use Fluffy\Swoole\Database\PostgreSQLPool;
 use DotDi\Interfaces\IDisposable;
-use Exception;
 use Fluffy\Domain\Configuration\Config;
 use Fluffy\Swoole\Database\IPostgresqlPool;
-use Fluffy\Swoole\Database\PostgreSqlConnectionPool;
 use PDO;
 use PDOStatement;
 use RuntimeException;
-use Swoole\ConnectionPool;
-use Swoole\Coroutine\PostgreSQL;
 
 class PostgreSqlPDOConnector implements IConnector, IDisposable
 {
@@ -74,10 +69,17 @@ class PostgreSqlPDOConnector implements IConnector, IDisposable
     public function dispose()
     {
         if (isset($this->pg)) {
-            $broken = $this->pg->errorCode() !== null;
-            // echo "PUT connection $broken" . PHP_EOL;
+            // $startedAt = microtime(true);
+            $broken = $this->pg->errorInfo()[1] !== null;
+            // echo "PUT connection $broken" . $this->pg->errorCode() .  PHP_EOL;
+            // Possible to improve, see https://www.postgresql.org/docs/current/errcodes-appendix.html
+            // var_dump($this->pg->errorInfo());
+            // if ($broken) {
+            //     var_dump($this->pg->errorInfo());
+            // }
             $this->connectionPool->put($broken ? null : $this->pg);
             unset($this->pg);
+            // echo (microtime(true) - $startedAt) . " PostgreSqlPDOConnector\n";
         }
     }
 }

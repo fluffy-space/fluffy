@@ -488,10 +488,20 @@ class BasePostgresqlRepository
             if ($indexMeta['Unique']) {
                 $unique = " UNIQUE";
             }
+
+
             $indexColumns = '';
             $columnComma = '';
-            foreach ($indexMeta['Columns'] as $column) {
-                $indexColumns .= "$columnComma\"$column\" ASC NULLS LAST";
+            foreach ($indexMeta['Columns'] as $column => $columnMeta) {
+                $indexOrder = 'ASC';
+                if (is_array($columnMeta)) {
+                    if (isset($columnMeta['Order'])) {
+                        $indexOrder = $columnMeta['Order'];
+                    }
+                } else {
+                    $column = $columnMeta;
+                }
+                $indexColumns .= "$columnComma\"$column\" $indexOrder NULLS LAST";
                 $columnComma = ', ';
             }
             $indexSql = <<<EOD

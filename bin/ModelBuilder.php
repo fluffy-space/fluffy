@@ -6,9 +6,7 @@ class ModelBuilder
     private array $steps;
     private string $modelName;
 
-    public function __construct(private string $baseDir, private array $inputs)
-    {
-    }
+    public function __construct(private string $baseDir, private array $inputs) {}
 
     private function generateFile(string $name, string $namespace, string $templatePath)
     {
@@ -120,7 +118,7 @@ class ModelBuilder
                         $namespace = '\\' . str_replace('/', '\\', $folder);
                     }
                     if (!file_exists($modelPath)) {
-                        mkdir($modelPath);
+                        mkdir($modelPath, 0777, true);
                     }
                     $filePath = $modelPath . $this->modelName . '.php';
                     if (file_exists($filePath)) {

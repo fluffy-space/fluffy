@@ -53,7 +53,7 @@ class ViewiPageBuilder
                             $modelNamespace = '\\' . str_replace('/', '\\', $modelFolder);
                         }
                         if (!file_exists($modelPath)) {
-                            mkdir($modelPath);
+                            mkdir($modelPath, 0777, true);
                         }
                         $filePath = $modelPath . $basePrefix . $this->viewiPageName .  $baseName;
                         if (file_exists($filePath)) {

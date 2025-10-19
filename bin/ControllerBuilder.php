@@ -4,9 +4,7 @@ class ControllerBuilder
 {
     private string $controllerName;
 
-    public function __construct(private string $baseDir, private array $inputs)
-    {
-    }
+    public function __construct(private string $baseDir, private array $inputs) {}
 
     public function build()
     {
@@ -34,12 +32,13 @@ class ControllerBuilder
                         $namespace = '\\' . str_replace('/', '\\', $folder);
                     }
                     if (!file_exists($controllerPath)) {
-                        mkdir($controllerPath);
+                        mkdir($controllerPath, 0777, true);
                     }
                     $filePath = $controllerPath . $this->controllerName . 'Controller.php';
                     if (file_exists($filePath)) {
-                        $line = readline("[ControllerBuilder] File $filePath already exists. Do you wish to override? [y,n]: " . PHP_EOL);
-                        readline_add_history($line);
+                        // $line = readline("[ControllerBuilder] File $filePath already exists. Do you wish to override? [y,n]: " . PHP_EOL);
+                        // readline_add_history($line);
+                        $line = 'y';
                         if ($line !== 'y') {
                             echo "[ControllerBuilder] canceling generating" . PHP_EOL;
                             break;
@@ -68,12 +67,13 @@ class ControllerBuilder
                             $namespace = '\\' . str_replace('/', '\\', $folder);
                         }
                         if (!file_exists($modelPath)) {
-                            mkdir($modelPath);
+                            mkdir($modelPath, 0777, true);
                         }
                         $filePath = $modelPath . $basePrefix . $this->controllerName .  $baseName . '.php';
                         if (file_exists($filePath)) {
-                            $line = readline("[ControllerBuilder] File $filePath already exists. Do you wish to override? [y,n]: " . PHP_EOL);
-                            readline_add_history($line);
+                            //$line = readline("[ControllerBuilder] File $filePath already exists. Do you wish to override? [y,n]: " . PHP_EOL);
+                            //readline_add_history($line);
+                            $line = 'y';
                             if ($line !== 'y') {
                                 echo "[ControllerBuilder] canceling generating" . PHP_EOL;
                                 break;

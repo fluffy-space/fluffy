@@ -1,18 +1,16 @@
 <?php
 
-namespace Fluffy\Swoole\Connectors;
+namespace Fluffy\Data\Connector;
 
 use DotDi\Interfaces\IDisposable;
 use Redis;
 use Swoole\Database\RedisPool;
 
-class SwooleRedisConnector implements IDisposable
+class RedisConnector implements IDisposable
 {
     private Redis $redis;
 
-    public function __construct(private RedisPool $pool)
-    {
-    }
+    public function __construct(private RedisPool $pool) {}
 
     /**
      * 

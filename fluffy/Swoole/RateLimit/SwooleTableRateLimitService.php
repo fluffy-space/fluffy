@@ -4,7 +4,7 @@ namespace Fluffy\Swoole\RateLimit;
 
 use Fluffy\Swoole\Task\TaskManager;
 
-class RateLimitService
+class SwooleTableRateLimitService implements IRateLimitService
 {
     public function __construct(private \AppServer $appServer, private TaskManager $taskManager)
     {

@@ -3,7 +3,6 @@
 namespace Fluffy\Domain\App;
 
 use Fluffy\Data\Connector\IConnector;
-use Fluffy\Data\Connector\PostgreSQLConnector;
 use Fluffy\Data\Context\DbContext;
 use Fluffy\Data\Mapper\IMapper;
 use Fluffy\Data\Mapper\StdMapper;
@@ -12,13 +11,10 @@ use Fluffy\Data\Repositories\MigrationRepository;
 use Fluffy\Data\Repositories\SessionRepository;
 use Fluffy\Data\Repositories\UserRepository;
 use Fluffy\Domain\Configuration\Config;
-use Fluffy\Domain\Message\HttpRequest;
-use Fluffy\Domain\Message\HttpResponse;
 use Fluffy\Middleware\RoutingMiddleware;
 use Fluffy\Migrations\CoreMigrationsMark;
 use Fluffy\Services\Auth\AuthorizationService;
 use Fluffy\Services\Session\SessionService;
-use Fluffy\Swoole\Connectors\SwooleRedisConnector;
 use Fluffy\Swoole\Database\PostgreSQLPool;
 use DotDi\DependencyInjection\IServiceProvider;
 use DotDi\DependencyInjection\ServiceProviderHelper;
@@ -26,6 +22,7 @@ use ReflectionException;
 use Exception;
 use Fluffy\Data\Connector\PostgreSqlClientConnector;
 use Fluffy\Data\Connector\PostgreSqlPDOConnector;
+use Fluffy\Data\Connector\RedisConnector;
 use Fluffy\Data\Repositories\UserTokenRepository;
 use Fluffy\Data\Repositories\UserVerificationCodeRepository;
 use Fluffy\Domain\App\IStartUp;
@@ -35,10 +32,14 @@ use Fluffy\Migrations\IMigrationsContext;
 use Fluffy\Swoole\Cache\CacheManager;
 use Fluffy\Swoole\Database\IPostgresqlPool;
 use Fluffy\Swoole\Database\PostgresPDOPool;
-use Fluffy\Swoole\RateLimit\RateLimitService;
+use Fluffy\Swoole\RateLimit\IRateLimitService;
+use Fluffy\Swoole\RateLimit\RedisRateLimitService;
+use Fluffy\Swoole\RateLimit\SwooleTableRateLimitService;
 use Fluffy\Swoole\Task\TaskManager;
 use Fluffy\Swoole\Websocket\HubServer;
 use Swoole\Database\PDOConfig;
+use Swoole\Database\RedisConfig;
+use Swoole\Database\RedisPool;
 use Viewi\Bridge\IViewiBridge;
 use Viewi\Engine;
 
@@ -83,7 +84,10 @@ class BaseStartUp implements IStartUp
         $swooleVersion = explode('.', phpversion('swoole') ?? '5')[0];
         $serviceProvider->addSingleton(TaskManager::class);
         $serviceProvider->addSingleton(CacheManager::class);
-        $serviceProvider->addSingleton(RateLimitService::class);
+        // rate limiter
+        $serviceProvider->addSingleton(IRateLimitService::class, RedisRateLimitService::class);
+        // OR, chose one
+        // $serviceProvider->addSingleton(IRateLimitService::class, SwooleTableRateLimitService::class);
         $serviceProvider->addSingleton(HubServer::class);
         $this->config = new Config();
         $this->config->addArray(require($this->appDir . '/../configs/app.php'));
@@ -107,9 +111,18 @@ class BaseStartUp implements IStartUp
             $serviceProvider->setSingleton(IPostgresqlPool::class, $pgPool);
             $serviceProvider->addScoped(IConnector::class, PostgreSqlPDOConnector::class);
         }
+        $redisConfig = $this->config->values['redis'];
+        $redisPool = new RedisPool((new RedisConfig)
+                ->withHost($redisConfig['host'])
+                ->withPort($redisConfig['port'])
+                ->withAuth($redisConfig['auth'])
+                ->withDbIndex($redisConfig['dbIndex'])
+                ->withTimeout($redisConfig['timeout'])
+        );
+        $serviceProvider->setSingleton(RedisPool::class, $redisPool);
+        $serviceProvider->addScoped(RedisConnector::class);
         $serviceProvider->addScoped(SessionService::class);
         $serviceProvider->addScoped(AuthorizationService::class);
-        $serviceProvider->addScoped(SwooleRedisConnector::class);
         $serviceProvider->addScoped(UserRepository::class);
         $serviceProvider->addScoped(SessionRepository::class);
         $serviceProvider->addScoped(MigrationRepository::class);

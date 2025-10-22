@@ -12,13 +12,13 @@ class RedisRateLimitService implements IRateLimitService
     {
         $redisKey = "RL:$key";
         $redis = $this->redisConnector->get();
-        $final = $redis->incr($redisKey);
+        $final = $redis->incr($redisKey); // to test overflow , 9223372036854775807
         // print_r([$key, $final]);
         if ($final === 1) {
             $redis->expire($redisKey, $lifetime);
         }
-        // TODO: test overflow
-        if ($final > $max) {
+        // $final is false on overflow
+        if (!$final || $final > $max) {
             return false;
         }
         return true;

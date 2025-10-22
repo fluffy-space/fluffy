@@ -29,6 +29,7 @@ use Fluffy\Domain\App\IStartUp;
 use Fluffy\Domain\Viewi\ViewiFluffyBridge;
 use Fluffy\Migrations\BaseMigrationsContext;
 use Fluffy\Migrations\IMigrationsContext;
+use Fluffy\Services\Cache\RedisCache;
 use Fluffy\Swoole\Cache\CacheManager;
 use Fluffy\Swoole\Database\IPostgresqlPool;
 use Fluffy\Swoole\Database\PostgresPDOPool;
@@ -120,6 +121,7 @@ class BaseStartUp implements IStartUp
                 ->withTimeout($redisConfig['timeout'])
         );
         $serviceProvider->setSingleton(RedisPool::class, $redisPool);
+        $serviceProvider->addScoped(RedisCache::class);
         $serviceProvider->addScoped(RedisConnector::class);
         $serviceProvider->addScoped(SessionService::class);
         $serviceProvider->addScoped(AuthorizationService::class);

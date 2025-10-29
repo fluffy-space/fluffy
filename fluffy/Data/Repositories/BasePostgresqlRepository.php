@@ -325,6 +325,79 @@ class BasePostgresqlRepository
         return false;
     }
 
+    /**
+     * 
+     * @param {BaseEntity[]} $entities 
+     * @param array $onCondition 
+     * @param bool $update 
+     * @return void 
+     */
+    public function merge(array $entities, array $onCondition, bool $update = true)
+    {
+        $now = self::getTime();
+        $columns = '';
+        $sourceColumns = '';
+        $comma = '';
+        $newLine = PHP_EOL;
+        $keyName = $this->entityMap::$PrimaryKeys[0];
+        $tableColumns = $this->entityMap::Columns();
+        foreach ($tableColumns as $property => $columnMeta) {
+            if ($property !== $keyName) {
+                $columns .= "$comma\"{$property}\"";
+                $sourceColumns .= "{$comma}SRC.\"{$property}\"";
+                $comma = ', ';
+            }
+        }
+        $valueList = '';
+        $groupComma = '    ';
+        foreach ($entities as $entity) {
+            $entity->CreatedOn = $now;
+            $entity->UpdatedOn = $now;
+            $comma = '';
+            $values = '';
+            foreach ($tableColumns as $property => $columnMeta) {
+                if ($property !== $keyName) {
+                    $value = $entity->{$property};
+                    if (is_bool($entity->{$property})) {
+                        $value = $entity->{$property} ? 'true' : 'false';
+                    } else if ($entity->{$property} === null) {
+                        $value = 'NULL::' . $columnMeta['type'];
+                    } else if (is_integer($entity->{$property})) {
+                        $value = $entity->{$property};
+                    } else if (is_float($entity->{$property})) {
+                        $value = number_format($entity->{$property}, 8, '.', '');
+                    } elseif ($columnMeta['type'] === 'bytea') {
+                        $value = "decode('" . bin2hex($entity->{$property}) . "', 'hex')";
+                    } else {
+                        $value = $this->connector->escapeLiteral($entity->{$property});
+                    }
+                    $values .= "$comma{$value}";
+                    $comma = ', ';
+                }
+            }
+            $valueList .= "$groupComma($values)";
+            $groupComma = "," . PHP_EOL . '    ';
+        }
+
+        $sql = "MERGE INTO {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" AS DST" . PHP_EOL;
+        $sql .= "USING  ($newLine   VALUES {$newLine}$valueList $newLine) AS SRC ($columns)" . PHP_EOL;
+        $matchOn = 'DST."' . $onCondition[0] . '" ' .  $onCondition[1] .  ' SRC."' . $onCondition[2] . '"';
+        $sql .= "ON $matchOn" . PHP_EOL;
+        if ($update) {
+            // TODO: implement on match update
+        }
+        $sql .= "WHEN NOT MATCHED THEN" . PHP_EOL;
+        $sql .= "    INSERT ($columns) {$newLine}VALUES ($sourceColumns)" . PHP_EOL;
+        // TODO: upgrade postgresql server to support returning
+        // psql --version
+        // $sql .= "RETURNING DST.*, merge_action();";
+        //print_r([$sql]);
+        $arr = $this->connector->query($sql);
+        //print_r([$arr]);
+        $arr = $this->connector->affectedRows();
+        print_r([$arr]);
+    }
+
     public function delete(BaseEntity $entity)
     {
         $keyName = $this->entityMap::$PrimaryKeys[0];

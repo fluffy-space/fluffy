@@ -15,6 +15,14 @@ class CommonMap
         'null' => false,
         'autoIncrement' => true
     ];
+
+    public static array $IdAllowInsert =  [
+        'type' => 'bigint',
+        'null' => false,
+        'autoIncrement' => true,
+        'allowInsert' => true
+    ];
+
     public static array $Int =  [
         'type' => 'integer',
         'null' => false

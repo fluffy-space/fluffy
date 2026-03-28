@@ -381,7 +381,12 @@ class BasePostgresqlRepository
 
         $sql = "MERGE INTO {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" AS DST" . PHP_EOL;
         $sql .= "USING  ($newLine   VALUES {$newLine}$valueList $newLine) AS SRC ($columns)" . PHP_EOL;
-        $matchOn = 'DST."' . $options->onCondition[0] . '" ' .  $options->onCondition[1] .  ' SRC."' . $options->onCondition[2] . '"';
+        $matchOn = '';
+        $matchOnGlue = '';
+        foreach ($options->onCondition as $onCondition) {
+            $matchOn .= $matchOnGlue . 'DST."' . $onCondition[0] . '" ' .  $onCondition[1] .  ' SRC."' . $onCondition[2] . '"';
+            $matchOnGlue = "AND ";
+        }
         $sql .= "ON $matchOn" . PHP_EOL;
         if ($options->update) {
             // TODO: implement on match update

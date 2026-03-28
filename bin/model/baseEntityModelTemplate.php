@@ -2,7 +2,9 @@
 
 namespace Components\Models\SubFolder;
 
-class BaseEntityNameModel
+use SharedPaws\Models\BaseModel;
+
+class EntityNameModel extends BaseModel
 {
     public ?string $Title = null;
     public bool $Published = false;

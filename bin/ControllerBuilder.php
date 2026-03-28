@@ -52,7 +52,7 @@ class ControllerBuilder
                     file_put_contents($filePath, $template);
 
                     $modelTargets = [
-                        ['Model', 'baseEntityModelTemplate', 'Base'],
+                        //['Model', 'baseEntityModelTemplate', 'Base'],
                         ['Model', 'entityModelTemplate'],
                         ['Validation', 'entityValidation'],
                     ];

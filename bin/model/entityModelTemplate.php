@@ -2,13 +2,12 @@
 
 namespace Components\Models\SubFolder;
 
-class EntityNameModel extends BaseEntityNameModel
+use SharedPaws\Models\BaseModel;
+
+class EntityNameModel extends BaseModel
 {
-    public int $Id;
-
-    public int $CreatedOn;
-    public ?string $CreatedBy = null;
-
-    public int $UpdatedOn;
-    public ?string $UpdatedBy = null;
+    public ?string $Title = null;
+    public bool $Published = false;
+    public ?int $PictureId = null;
+    public ?string $PicturePath = null;
 }

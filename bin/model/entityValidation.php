@@ -2,15 +2,16 @@
 
 namespace Components\Models\SubFolder;
 
-use Components\Models\Validation\ValidationRules;
+use SharedPaws\Validation\IValidationRules;
+use SharedPaws\Validation\ValidationRules;
 
-class EntityNameValidation
+class EntityNameValidation implements IValidationRules
 {
-    public function __construct(private BaseEntityNameModel $model)
+    public function __construct(private EntityNameModel $model)
     {
     }
 
-    public function getValidationRules()
+    public function getValidationRules(): array
     {
         return ValidationRules::rules($this->model)
             ->toList();

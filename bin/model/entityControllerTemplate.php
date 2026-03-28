@@ -5,8 +5,7 @@ namespace Application\Controllers\Admin\SubFolder;
 use Application\Data\Entities\SubFolder\EntityNameEntity;
 use Application\Data\Entities\SubFolder\EntityNameEntityMap;
 use Application\Data\Repositories\EntityNameRepository;
-use Application\Services\Auth\MemberAuthorization;
-use Components\Models\SubFolder\BaseEntityNameModel;
+use Fluffy\Services\Auth\AuthorizationService;
 use Components\Models\SubFolder\EntityNameModel;
 use Components\Models\SubFolder\EntityNameValidation;
 use Fluffy\Controllers\BaseController;
@@ -17,7 +16,7 @@ class EntityNameController extends BaseController
     function __construct(
         protected IMapper $mapper,
         protected EntityNameRepository $entityNames,
-        protected MemberAuthorization $auth
+        protected AuthorizationService $auth
     ) {
     }
 
@@ -61,7 +60,7 @@ class EntityNameController extends BaseController
         return $model;
     }
 
-    public function Update(int $id, BaseEntityNameModel $entityName)
+    public function Update(int $id, EntityNameModel $entityName)
     {
         if (!$this->auth->authorizeAdminRequest()) {
             return $this->Forbidden();
@@ -109,7 +108,7 @@ class EntityNameController extends BaseController
         return $success;
     }
 
-    public function Create(BaseEntityNameModel $entityName)
+    public function Create(EntityNameModel $entityName)
     {
         if (!$this->auth->authorizeAdminRequest()) {
             return $this->Forbidden();

@@ -2,6 +2,7 @@
 
 namespace Fluffy\Data\Repositories;
 
+use Exception;
 use Fluffy\Data\Connector\IConnector;
 use Fluffy\Data\Entities\BaseEntity;
 use Fluffy\Data\Entities\BaseEntityMap;
@@ -390,6 +391,7 @@ class BasePostgresqlRepository
         $sql .= "ON $matchOn" . PHP_EOL;
         if ($options->update) {
             // TODO: implement on match update
+            throw new Exception("Merge update is not implemented.");
         }
         $sql .= "WHEN NOT MATCHED THEN" . PHP_EOL;
         $sql .= "    INSERT ($columns) {$newLine}VALUES ($sourceColumns)" . PHP_EOL;

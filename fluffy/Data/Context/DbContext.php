@@ -30,6 +30,7 @@ class DbContext
     {
         $entityMap = $query->entityTypeMap ?? EntitiesMap::$map[$query->entityType] ?? throw new Exception("{$query->entityType} has no registered entity map.");
         $sqlQueries = $this->buildQuery($query, $entityMap);
+        // print_r($query);
         // print_r([$sqlQueries]);
         /**
          * @var BaseEntity[] $list
@@ -102,28 +103,43 @@ class DbContext
      */
     public function buildQuery(Query $query, string $entityMap): array
     {
-
+        $alias = $query->alias ?? '';
         $select = '';
         $comma = '';
         $columns = $entityMap::Columns();
         if ($query->selectColumns !== null) {
             $columns = array_flip($query->selectColumns);
         }
+        $aliasPrefix = $alias ? "$alias." : "";
         foreach ($columns as $property => $_) {
-            $select .= "$comma\"{$property}\"";
+            $select .= "$comma{$aliasPrefix}\"{$property}\"";
             $comma = ', ';
         }
 
         $orderGlue = "ORDER BY ";
         $orderBy = '';
         foreach ($query->orderBys as [$column, $orderWay]) {
-            $orderBy .= $orderGlue . "\"$column\"" . ($orderWay > 0 ? " ASC" : " DESC");
+            $orderBy .= $orderGlue . "{$aliasPrefix}\"$column\"" . ($orderWay > 0 ? " ASC" : " DESC");
             $orderGlue = ', ';
         }
 
         $wherePart = $this->buildWhere($query->expressions);
         if ($wherePart) {
             $wherePart = "WHERE $wherePart";
+        }
+
+        $joins = "";
+        foreach ($query->joins as $joinQuery) {
+            $joinEntityMap = $joinQuery->entityTypeMap ?? EntitiesMap::$map[$joinQuery->entityType] ?? throw new Exception("{$joinQuery->entityType} has no registered entity map.");
+            $joinAlias = $joinQuery->alias ?? '';
+            $joins .= " INNER JOIN {$joinEntityMap::$Schema}.\"{$joinEntityMap::$Table}\" $joinAlias";
+            $joinOn = "";
+            $joinAnd = '';
+            foreach ($joinQuery->expressions as $joinExpression) {
+                $joinOn .= $joinAnd . ' ' . $joinExpression[0] . ' ' . $joinExpression[1] . ' ' . $joinExpression[2];
+                $joinAnd = ' AND';
+            }
+            $joins .= " ON $joinOn";
         }
 
         $queries = [];
@@ -138,11 +154,11 @@ class DbContext
             } elseif ($query->take > 0) {
                 $limit = "LIMIT {$query->take}";
             }
-            $queries['list'] =  "SELECT $select FROM {$entityMap::$Schema}.\"{$entityMap::$Table}\" $wherePart $orderBy $limit";
+            $queries['list'] =  "SELECT $select FROM {$entityMap::$Schema}.\"{$entityMap::$Table}\" $alias $joins $wherePart $orderBy $limit";
         }
 
         if ($query->withCount && !$query->firstOrDefault) {
-            $queries['count'] = "SELECT COUNT(*) as \"count\" FROM {$entityMap::$Schema}.\"{$entityMap::$Table}\" $wherePart";
+            $queries['count'] = "SELECT COUNT(*) as \"count\" FROM {$entityMap::$Schema}.\"{$entityMap::$Table}\" $alias $joins $wherePart";
         }
 
         return $queries;

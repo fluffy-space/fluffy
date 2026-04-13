@@ -8,6 +8,10 @@ class Query
 {
     public array $expressions = [];
     public array $orderBys = [];
+    /**
+     * 
+     * @var Query[]
+     */
     public array $joins = [];
     public array $includes = [];
     public ?array $selectColumns = null;
@@ -78,7 +82,7 @@ class Query
     /**
      * 
      * @param string|BaseEntity $entityType 
-     * @return Join 
+     * @return Query 
      */
     public function join($entityType, ?string $alias = null): self
     {

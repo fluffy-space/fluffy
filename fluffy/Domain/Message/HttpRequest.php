@@ -18,6 +18,6 @@ abstract class HttpRequest
     public abstract function getHeader(?string $name = null);
     public function getIp()
     {
-        return $this->headers['x-real-ip'] ?? $this->server['remote_addr'];
+        return $this->headers['x-real-ip'] ?? $this->server['remote_addr'] ?? '127.0.0.1';
     }
 }

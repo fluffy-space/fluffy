@@ -23,6 +23,7 @@ use Exception;
 use Fluffy\Data\Connector\PostgreSqlClientConnector;
 use Fluffy\Data\Connector\PostgreSqlPDOConnector;
 use Fluffy\Data\Connector\RedisConnector;
+use Fluffy\Data\Query\QueryFunctions;
 use Fluffy\Data\Repositories\UserTokenRepository;
 use Fluffy\Data\Repositories\UserVerificationCodeRepository;
 use Fluffy\Domain\App\IStartUp;
@@ -82,6 +83,7 @@ class BaseStartUp implements IStartUp
 
     function configureServices(IServiceProvider $serviceProvider): void
     {
+        QueryFunctions::touch();
         $swooleVersion = explode('.', phpversion('swoole') ?? '5')[0];
         $serviceProvider->addSingleton(TaskManager::class);
         $serviceProvider->addSingleton(CacheManager::class);

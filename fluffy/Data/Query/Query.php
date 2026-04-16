@@ -6,6 +6,10 @@ use Fluffy\Data\Entities\BaseEntity;
 
 class Query
 {
+    /**
+     * 
+     * @var Expression[]
+     */
     public array $expressions = [];
     public array $orderBys = [];
     /**
@@ -43,7 +47,7 @@ class Query
         return $expression;
     }
 
-    public function where($expression)
+    public function where(Expression $expression)
     {
         $this->expressions[] = $expression;
         return $this;

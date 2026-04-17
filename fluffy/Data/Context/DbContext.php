@@ -36,7 +36,7 @@ class DbContext
         $entityMap = $query->entityTypeMap ?? EntitiesMap::$map[$query->entityType] ?? throw new Exception("{$query->entityType} has no registered entity map.");
         $sqlQueries = $this->buildQuery($query, $entityMap);
         // print_r($query);
-        print_r([$sqlQueries]);
+        // print_r([$sqlQueries]);
         /**
          * @var BaseEntity[] $list
          */
@@ -183,7 +183,7 @@ class DbContext
 
         if ($expression->right) {
             if ($expression->right instanceof Column) {
-                $aliasPrefix = $expression->left->alias ? "{$expression->left->alias}." : "";
+                $aliasPrefix = $expression->right->alias ? "{$expression->right->alias}." : "";
                 $raw .= "$aliasPrefix\"{$expression->right->name}\"";
             } elseif ($expression->right instanceof Expression) {
                 $raw .= $this->buildExpression($expression->right);

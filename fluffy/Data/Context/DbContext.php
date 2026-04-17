@@ -11,6 +11,9 @@ use Fluffy\Data\Query\Query;
 use RuntimeException;
 use Swoole\Coroutine\PostgreSQL;
 
+use function Fluffy\Data\Query\c;
+use function Fluffy\Data\Query\x;
+
 class DbContext
 {
     public function __construct(private IMapper $mapper, private IConnector $connector) {}
@@ -31,7 +34,7 @@ class DbContext
         $entityMap = $query->entityTypeMap ?? EntitiesMap::$map[$query->entityType] ?? throw new Exception("{$query->entityType} has no registered entity map.");
         $sqlQueries = $this->buildQuery($query, $entityMap);
         // print_r($query);
-        // print_r([$sqlQueries]);
+        print_r([$sqlQueries]);
         /**
          * @var BaseEntity[] $list
          */
@@ -61,7 +64,7 @@ class DbContext
                 }
                 if ($hasIds) {
                     $entitiesToInclude = $this->execute(Query::from($foreignKeys[$includeProp]['Table'])
-                        ->where([$columnKey, 'in', $ids])
+                        ->where(x(c($columnKey), 'IN', $ids))
                         ->withCount(false));
 
                     $map = [];
@@ -164,6 +167,12 @@ class DbContext
         return $queries;
     }
 
+    /**
+     * 
+     * @param Expression[] $where 
+     * @param string $concatOperator 
+     * @return string 
+     */
     public function buildWhere(array $where, string $concatOperator = "AND"): string
     {
         $wherePart = '';

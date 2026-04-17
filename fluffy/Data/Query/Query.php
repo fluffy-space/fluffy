@@ -86,20 +86,15 @@ class Query
     /**
      * 
      * @param string|BaseEntity $entityType 
-     * @return Query 
+     * @return JoinClause 
      */
-    public function join($entityType, ?string $alias = null): self
+    public function join($entityType, ?string $alias = null): JoinClause
     {
-        $join = new Query($entityType, $this, $alias);
+        $join = new JoinClause($entityType, $this, $alias);
         $this->joins[] = $join;
         return $join;
     }
 
-    public function on($expression): self
-    {
-        $this->expressions[] = $expression;
-        return $this->parentQuery;
-    }
 
     public function include($include): self
     {

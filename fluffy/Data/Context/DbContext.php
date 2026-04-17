@@ -7,6 +7,8 @@ use Fluffy\Data\Connector\IConnector;
 use Fluffy\Data\Entities\BaseEntity;
 use Fluffy\Data\Entities\BaseEntityMap;
 use Fluffy\Data\Mapper\IMapper;
+use Fluffy\Data\Query\Column;
+use Fluffy\Data\Query\Expression;
 use Fluffy\Data\Query\Query;
 use RuntimeException;
 use Swoole\Coroutine\PostgreSQL;
@@ -126,9 +128,10 @@ class DbContext
             $orderGlue = ', ';
         }
 
-        $wherePart = $this->buildWhere($query->expressions);
-        if ($wherePart) {
-            $wherePart = "WHERE $wherePart";
+
+        $wherePart = '';
+        if ($query->whereExpression) {
+            $wherePart = "WHERE " . $this->buildExpression($query->whereExpression);
         }
 
         $joins = "";
@@ -136,12 +139,7 @@ class DbContext
             $joinEntityMap = $joinQuery->entityTypeMap ?? EntitiesMap::$map[$joinQuery->entityType] ?? throw new Exception("{$joinQuery->entityType} has no registered entity map.");
             $joinAlias = $joinQuery->alias ?? '';
             $joins .= " INNER JOIN {$joinEntityMap::$Schema}.\"{$joinEntityMap::$Table}\" $joinAlias";
-            $joinOn = "";
-            $joinAnd = '';
-            foreach ($joinQuery->expressions as $joinExpression) {
-                $joinOn .= $joinAnd . ' ' . $joinExpression[0] . ' ' . $joinExpression[1] . ' ' . $joinExpression[2];
-                $joinAnd = ' AND';
-            }
+            $joinOn = $this->buildExpression($joinQuery->onExpression);
             $joins .= " ON $joinOn";
         }
 
@@ -167,6 +165,48 @@ class DbContext
         return $queries;
     }
 
+    public function buildExpression(Expression $expression): string
+    {
+        $raw = '';
+        if ($expression->left instanceof Column) {
+            $aliasPrefix = $expression->left->alias ? "{$expression->left->alias}." : "";
+            $raw .= "$aliasPrefix\"{$expression->left->name}\"";
+        } elseif ($expression->left instanceof Expression) {
+            $raw .= $this->buildExpression($expression->left);
+        } else {
+            $raw .= $this->buildValue($expression->left);
+        }
+
+        if ($expression->operatorRaw) {
+            $raw .= ' ' . $expression->operatorRaw . ' ';
+        }
+
+        if ($expression->right) {
+            if ($expression->right instanceof Column) {
+                $aliasPrefix = $expression->left->alias ? "{$expression->left->alias}." : "";
+                $raw .= "$aliasPrefix\"{$expression->right->name}\"";
+            } elseif ($expression->right instanceof Expression) {
+                $raw .= $this->buildExpression($expression->right);
+            } else {
+                $raw .= $this->buildValue($expression->right);
+            }
+        }
+
+        foreach ($expression->children as $child) {
+            $raw .= ' ' . $child->glueOperator . ' ';
+            $enclose = count($child->expression->children) > 0;
+            if ($enclose) {
+                $raw .= '(';
+            }
+            $raw .= $this->buildExpression($child->expression);
+            if ($enclose) {
+                $raw .= ')';
+            }
+        }
+
+        return $raw;
+    }
+
     /**
      * 
      * @param Expression[] $where 
@@ -177,19 +217,8 @@ class DbContext
     {
         $wherePart = '';
         $whereGlue = '';
-        foreach ($where as $condition) {
-            $column = $condition[0];
-            $orOperator = is_array($column);
-            if ($orOperator) {
-                $total = count($condition);
-                $wherePart .= $whereGlue . ($total > 1 ? '(' : '') . $this->buildWhere($condition, 'OR') . ($total > 1 ? ')' : '');
-            } else {
-                $hasOperator = isset($condition[2]);
-                $value = $this->buildValue($hasOperator ? $condition[2] : $condition[1]);
-                $operator = $hasOperator ? $condition[1] : '=';
-
-                $wherePart .= $whereGlue . "\"$column\" $operator $value";
-            }
+        foreach ($where as $expression) {
+            $wherePart .= $whereGlue . $this->buildExpression($expression);
             $whereGlue = " $concatOperator ";
         }
         return $wherePart;

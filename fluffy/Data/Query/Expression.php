@@ -43,7 +43,7 @@ class Expression
                     $operatorRaw,
                     $right
                 ),
-            'and'
+            'AND'
         );
         return $this;
     }
@@ -67,7 +67,7 @@ class Expression
                     $operatorRaw,
                     $right
                 ),
-            'or'
+            'OR'
         );
         return $this;
     }

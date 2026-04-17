@@ -6,15 +6,11 @@ use Fluffy\Data\Entities\BaseEntity;
 
 class Query
 {
-    /**
-     * 
-     * @var Expression[]
-     */
-    public array $expressions = [];
+    public ?Expression $whereExpression = null;
     public array $orderBys = [];
     /**
      * 
-     * @var Query[]
+     * @var JoinClause[]
      */
     public array $joins = [];
     public array $includes = [];
@@ -42,14 +38,13 @@ class Query
         return new Query($entityType, null, $alias);
     }
 
-    public static function or($expression): array
-    {
-        return $expression;
-    }
-
     public function where(Expression $expression)
     {
-        $this->expressions[] = $expression;
+        if (!$this->whereExpression) {
+            $this->whereExpression = $expression;
+        } else {
+            $this->whereExpression->and($expression);
+        }
         return $this;
     }
 

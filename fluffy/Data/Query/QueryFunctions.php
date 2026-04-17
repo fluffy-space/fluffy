@@ -51,5 +51,5 @@ function x(
 
 
 // $user = from(User::class)
-// ->where(x(c('Name'),'=','Admin')->and(c('Id', '>', 0)))
+// ->where(x(c('Name'),'=','Admin')->and(c('Id'), '>', 0))
 // ->first();

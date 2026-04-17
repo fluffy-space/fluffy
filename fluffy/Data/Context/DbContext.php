@@ -181,7 +181,7 @@ class DbContext
             $raw .= ' ' . $expression->operatorRaw . ' ';
         }
 
-        if ($expression->right) {
+        if ($expression->right !== null) {
             if ($expression->right instanceof Column) {
                 $aliasPrefix = $expression->right->alias ? "{$expression->right->alias}." : "";
                 $raw .= "$aliasPrefix\"{$expression->right->name}\"";

@@ -13,9 +13,9 @@ class Expression
 
     /**
      * 
-     * @param Column|string|int|float|bool|Expression $left 
+     * @param Column|ExpressionGroup|string|int|float|bool|Expression $left 
      * @param null|string $operatorRaw 
-     * @param Column|string|int|float|bool|Expression $right 
+     * @param Column|ExpressionGroup|string|int|float|bool|Expression $right 
      * @return Expression 
      */
     public function __construct(

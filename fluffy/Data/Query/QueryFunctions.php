@@ -35,9 +35,9 @@ function from($entityType, ?string $alias = null)
 
 /**
  * 
- * @param Column|string|int|float|bool|Expression $left 
+ * @param Column|ExpressionGroup|string|int|float|bool|Expression $left 
  * @param null|string $operatorRaw 
- * @param Column|string|int|float|bool|Expression $right 
+ * @param Column|ExpressionGroup|string|int|float|bool|Expression $right 
  * @return Expression 
  */
 function x(
@@ -46,6 +46,11 @@ function x(
     $right = null
 ) {
     return new Expression($left, $operatorRaw, $right);
+}
+
+function group()
+{
+    return new ExpressionGroup();
 }
 
 

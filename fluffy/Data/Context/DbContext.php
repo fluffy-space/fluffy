@@ -9,6 +9,7 @@ use Fluffy\Data\Entities\BaseEntityMap;
 use Fluffy\Data\Mapper\IMapper;
 use Fluffy\Data\Query\Column;
 use Fluffy\Data\Query\Expression;
+use Fluffy\Data\Query\ExpressionGroup;
 use Fluffy\Data\Query\Query;
 use RuntimeException;
 use Swoole\Coroutine\PostgreSQL;
@@ -36,6 +37,7 @@ class DbContext
         $entityMap = $query->entityTypeMap ?? EntitiesMap::$map[$query->entityType] ?? throw new Exception("{$query->entityType} has no registered entity map.");
         $sqlQueries = $this->buildQuery($query, $entityMap);
         // print_r($query);
+        // print_r($query->whereExpression);
         // print_r([$sqlQueries]);
         /**
          * @var BaseEntity[] $list
@@ -168,32 +170,36 @@ class DbContext
     public function buildExpression(Expression $expression): string
     {
         $raw = '';
-        if ($expression->left instanceof Column) {
-            $aliasPrefix = $expression->left->alias ? "{$expression->left->alias}." : "";
-            $raw .= "$aliasPrefix\"{$expression->left->name}\"";
-        } elseif ($expression->left instanceof Expression) {
-            $raw .= $this->buildExpression($expression->left);
-        } else {
-            $raw .= $this->buildValue($expression->left);
-        }
-
-        if ($expression->operatorRaw) {
-            $raw .= ' ' . $expression->operatorRaw . ' ';
-        }
-
-        if ($expression->right !== null) {
-            if ($expression->right instanceof Column) {
-                $aliasPrefix = $expression->right->alias ? "{$expression->right->alias}." : "";
-                $raw .= "$aliasPrefix\"{$expression->right->name}\"";
-            } elseif ($expression->right instanceof Expression) {
-                $raw .= $this->buildExpression($expression->right);
+        if (!($expression->left instanceof ExpressionGroup)) {
+            if ($expression->left instanceof Column) {
+                $aliasPrefix = $expression->left->alias ? "{$expression->left->alias}." : "";
+                $raw .= "$aliasPrefix\"{$expression->left->name}\"";
+            } elseif ($expression->left instanceof Expression) {
+                $raw .= $this->buildExpression($expression->left);
             } else {
-                $raw .= $this->buildValue($expression->right);
+                $raw .= $this->buildValue($expression->left);
+            }
+
+            if ($expression->operatorRaw) {
+                $raw .= ' ' . $expression->operatorRaw . ' ';
+            }
+
+            if ($expression->right !== null) {
+                if ($expression->right instanceof Column) {
+                    $aliasPrefix = $expression->right->alias ? "{$expression->right->alias}." : "";
+                    $raw .= "$aliasPrefix\"{$expression->right->name}\"";
+                } elseif ($expression->right instanceof Expression) {
+                    $raw .= $this->buildExpression($expression->right);
+                } else {
+                    $raw .= $this->buildValue($expression->right);
+                }
             }
         }
 
         foreach ($expression->children as $child) {
-            $raw .= ' ' . $child->glueOperator . ' ';
+            if ($raw) {
+                $raw .= ' ' . $child->glueOperator . ' ';
+            }
             $enclose = count($child->expression->children) > 0;
             if ($enclose) {
                 $raw .= '(';

@@ -441,10 +441,11 @@ class BasePostgresqlRepository
         return true;
     }
 
-    public function addColumns(array $columnsSchema)
+    public function addColumns(array $columnsSchema, bool $ifNotExists = false)
     {
         $tableName = $this->entityMap::$Table;
         $schema = $this->entityMap::$Schema;
+        $ifNotExistsSql = $ifNotExists ? ' IF NOT EXISTS' : '';
         $columns = '';
         $comma = '';
         foreach ($columnsSchema as $property => $columnMeta) {
@@ -461,7 +462,7 @@ class BasePostgresqlRepository
             if (isset($columnMeta['autoIncrement'])) {
                 $dataType .= " GENERATED ALWAYS AS IDENTITY";
             }
-            $columns .= "{$comma}ADD COLUMN \"{$property}\" $dataType";
+            $columns .= "{$comma}ADD COLUMN$ifNotExistsSql \"{$property}\" $dataType";
             $comma = ',' . PHP_EOL;
         }
         $sql = <<<EOD

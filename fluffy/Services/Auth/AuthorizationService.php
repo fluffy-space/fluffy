@@ -68,8 +68,7 @@ class AuthorizationService
         if ($user === null) {
             return false;
         }
-        // IsAdmin kept during the transition; the AccessAdmin capability is the new source of truth.
-        return $user->IsAdmin || Permissions::can($user->Permissions, Capability::AccessAdmin);
+        return Permissions::can($user->Permissions, Capability::AccessAdmin);
     }
 
     /** Effective permissions of the authorized user (0 when not authenticated). */

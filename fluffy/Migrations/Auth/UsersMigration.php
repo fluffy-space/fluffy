@@ -8,6 +8,7 @@ use Fluffy\Data\Repositories\MigrationRepository;
 use Fluffy\Data\Repositories\UserRepository;
 use Fluffy\Domain\Configuration\Config;
 use Fluffy\Migrations\BaseMigration;
+use Fluffy\Security\Role;
 use Fluffy\Services\Auth\AuthorizationService;
 
 class UsersMigration extends BaseMigration
@@ -30,7 +31,7 @@ class UsersMigration extends BaseMigration
                 'Password' => CommonMap::$VarChar255Null,
                 'Active' => CommonMap::$Boolean,
                 'EmailConfirmed' => CommonMap::$Boolean,
-                'IsAdmin' => CommonMap::$Boolean,
+                'Permissions' => CommonMap::$BigIntDefault0,
                 'CreatedOn' => CommonMap::$MicroDateTime,
                 'CreatedBy' => CommonMap::$VarChar255Null,
                 'UpdatedOn' => CommonMap::$MicroDateTime,
@@ -62,7 +63,7 @@ class UsersMigration extends BaseMigration
             $admin->LastName = $user['LastName'];
             $admin->UserName = $admin->Email;
             $admin->Password = $this->auth->hashPassword($user['Password']);
-            $admin->IsAdmin = true;
+            $admin->Permissions = Role::SuperAdmin;
             $this->userRepository->create($admin);
         }
     }

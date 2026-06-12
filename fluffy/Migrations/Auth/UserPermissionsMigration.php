@@ -12,12 +12,13 @@ use Fluffy\Migrations\BaseMigration;
 use Fluffy\Security\Role;
 
 /**
- * Adds User.Permissions (bigint bitmask) and grants the configured admins
- * (config.values['admins']) the SuperAdmin role.
+ * Upgrades databases created before User.Permissions replaced IsAdmin.
  *
- * SuperAdmin is the faithful grant because today IsAdmin gates every /api/admin
- * route (short urls, teams, seed points, system info). IsAdmin is kept for now
- * and dropped in a later migration once authorization is fully on Permissions.
+ * Fresh installs already get Permissions (and no IsAdmin) from UsersMigration,
+ * so every step here is idempotent and a no-op on a fresh schema:
+ *   - add Permissions IF NOT EXISTS
+ *   - grant the configured admins (config.values['admins']) SuperAdmin
+ *   - drop the old IsAdmin column IF EXISTS
  */
 class UserPermissionsMigration extends BaseMigration
 {
@@ -30,9 +31,9 @@ class UserPermissionsMigration extends BaseMigration
     {
         $this->userRepository->addColumns([
             UserEntityMap::PROPERTY_Permissions => CommonMap::$BigIntDefault0,
-        ]);
+        ], ifNotExists: true);
 
-        // Grant the configured admins the SuperAdmin role.
+        // Grant the configured admins the SuperAdmin role (idempotent).
         foreach ($this->config->values['admins'] as $admin) {
             /** @var UserEntity|null $user */
             $user = $this->userRepository->find(UserEntityMap::PROPERTY_Email, $admin['Email']);
@@ -41,10 +42,15 @@ class UserPermissionsMigration extends BaseMigration
                 $this->userRepository->update($user, [UserEntityMap::PROPERTY_Permissions]);
             }
         }
+
+        // Retire the legacy IsAdmin column.
+        $this->userRepository->dropColumns(['IsAdmin']);
     }
 
     public function down()
     {
+        // Restore the legacy column and drop Permissions.
+        $this->userRepository->addColumns(['IsAdmin' => CommonMap::$Boolean], ifNotExists: true);
         $this->userRepository->dropColumns([UserEntityMap::PROPERTY_Permissions]);
     }
 }

@@ -14,7 +14,6 @@ class UserEntity extends BaseEntity
     public ?string $Password = null;
     public bool $Active = false;
     public bool $EmailConfirmed = false;
-    public bool $IsAdmin = false;
     /**
      * Bitmask of assigned roles and granular capabilities.
      * Low bits (0-15) are role bits; high bits (16-62) are capability bits.

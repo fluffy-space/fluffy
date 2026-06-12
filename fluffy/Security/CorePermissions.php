@@ -14,8 +14,8 @@ final class CorePermissions
     {
         // SuperAdmin is also short-circuited in Permissions::effective; registering
         // it here keeps Permissions::roles()/labels aware of the role.
-        PermissionRegistry::define(Role::SuperAdmin, Permissions::allCapabilities());
-        PermissionRegistry::define(Role::Admin, Capability::ManageUsers | Capability::AccessAdmin | Capability::ManageRoles);
-        PermissionRegistry::define(Role::User, 0);
+        PermissionRegistry::define(Role::SuperAdmin, Permissions::allCapabilities(), Role::LABELS[Role::SuperAdmin]);
+        PermissionRegistry::define(Role::Admin, Capability::ManageUsers | Capability::AccessAdmin | Capability::ManageRoles, Role::LABELS[Role::Admin]);
+        PermissionRegistry::define(Role::User, 0, Role::LABELS[Role::User]);
     }
 }

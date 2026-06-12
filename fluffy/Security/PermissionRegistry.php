@@ -18,10 +18,16 @@ final class PermissionRegistry
     /** @var array<int,int> roleBit => capabilities mask */
     private static array $roleCapabilities = [];
 
-    /** Set (replace) the capabilities a role grants. */
-    public static function define(int $roleBit, int $capabilities): void
+    /** @var array<int,string> roleBit => human-readable label */
+    private static array $roleLabels = [];
+
+    /** Set (replace) the capabilities a role grants, optionally registering its label. */
+    public static function define(int $roleBit, int $capabilities, ?string $label = null): void
     {
         self::$roleCapabilities[$roleBit] = $capabilities;
+        if ($label !== null) {
+            self::$roleLabels[$roleBit] = $label;
+        }
     }
 
     /** Add capabilities to a role, keeping whatever was registered before. */
@@ -36,9 +42,19 @@ final class PermissionRegistry
         return self::$roleCapabilities;
     }
 
+    /**
+     * Catalog of registered roles in registration order (core first, then app).
+     * @return array<int,string> roleBit => label
+     */
+    public static function roleLabels(): array
+    {
+        return self::$roleLabels;
+    }
+
     /** Drop all registrations (test helper). */
     public static function reset(): void
     {
         self::$roleCapabilities = [];
+        self::$roleLabels = [];
     }
 }

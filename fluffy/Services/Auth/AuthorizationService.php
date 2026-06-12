@@ -83,6 +83,19 @@ class AuthorizationService
         return Permissions::can($this->permissions(), $capability);
     }
 
+    /**
+     * Admin-area gate plus a specific capability — for /api/admin/* endpoints
+     * that act globally. Requires AccessAdmin (so team-scoped roles that merely
+     * share a capability can't reach the admin endpoint) AND the capability
+     * (so staff are differentiated, e.g. Support read-only vs Admin full).
+     */
+    public function authorizeAdminCapability(int $capability): bool
+    {
+        $permissions = $this->permissions();
+        return Permissions::can($permissions, Capability::AccessAdmin)
+            && Permissions::can($permissions, $capability);
+    }
+
     /** Does the authorized user have the given role bit (see Fluffy\Security\Role)? */
     public function hasRole(int $roleBit): bool
     {

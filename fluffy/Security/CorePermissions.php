@@ -15,12 +15,12 @@ final class CorePermissions
         // SuperAdmin is also short-circuited in Permissions::effective; registering
         // it here keeps Permissions::roles()/labels aware of the role.
         PermissionRegistry::define(Role::SuperAdmin, Permissions::allCapabilities(), Role::LABELS[Role::SuperAdmin], 'SuperAdmin');
-        PermissionRegistry::define(Role::Admin, Capability::ManageUsers | Capability::AccessAdmin | Capability::ManageRoles, Role::LABELS[Role::Admin], 'Admin');
+        // Core grants Admin only the admin-area gate; downstream packages extend
+        // Admin with their own capabilities (user/role management, CMS, app features).
+        PermissionRegistry::define(Role::Admin, Capability::AccessAdmin, Role::LABELS[Role::Admin], 'Admin');
         PermissionRegistry::define(Role::User, 0, Role::LABELS[Role::User], 'User');
 
-        // Names for the core capability bits, so they can be shipped to the client.
-        PermissionRegistry::defineCapability(Capability::ManageUsers, 'ManageUsers');
+        // Name for the core capability bit, so it can be shipped to the client.
         PermissionRegistry::defineCapability(Capability::AccessAdmin, 'AccessAdmin');
-        PermissionRegistry::defineCapability(Capability::ManageRoles, 'ManageRoles');
     }
 }

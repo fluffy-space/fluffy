@@ -80,4 +80,39 @@ final class Permissions
         }
         return $roles;
     }
+
+    /**
+     * Stable system names of the registered roles assigned in this value,
+     * e.g. ['Admin', 'TeamOwner']. For the client (no 64-bit bitmask math in JS).
+     * @return string[]
+     */
+    public static function roleNames(int $permissions): array
+    {
+        $names = [];
+        foreach (PermissionRegistry::roleNames() as $roleBit => $name) {
+            if (($permissions & $roleBit) === $roleBit) {
+                $names[] = $name;
+            }
+        }
+        return $names;
+    }
+
+    /**
+     * Stable names of the effective capabilities this value grants,
+     * e.g. ['AccessAdmin', 'CreateShortUrl']. Lets the client gate UI without
+     * doing 64-bit bitmask math in JS. Only registered (named) capabilities
+     * appear — SuperAdmin therefore lists every registered capability.
+     * @return string[]
+     */
+    public static function capabilityNames(int $permissions): array
+    {
+        $effective = self::effective($permissions);
+        $names = [];
+        foreach (PermissionRegistry::capabilityNames() as $capabilityBit => $name) {
+            if (($effective & $capabilityBit) === $capabilityBit) {
+                $names[] = $name;
+            }
+        }
+        return $names;
+    }
 }

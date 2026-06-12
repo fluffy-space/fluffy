@@ -21,13 +21,43 @@ final class PermissionRegistry
     /** @var array<int,string> roleBit => human-readable label */
     private static array $roleLabels = [];
 
-    /** Set (replace) the capabilities a role grants, optionally registering its label. */
-    public static function define(int $roleBit, int $capabilities, ?string $label = null): void
+    /** @var array<int,string> roleBit => stable system name (e.g. 'TeamOwner') */
+    private static array $roleNames = [];
+
+    /** @var array<int,string> capabilityBit => stable name (e.g. 'CreateShortUrl') */
+    private static array $capabilityNames = [];
+
+    /**
+     * Set (replace) the capabilities a role grants, optionally registering its
+     * human-readable label and stable system name (the latter is what gets
+     * shipped to the client, which cannot do 64-bit bitmask checks in JS).
+     */
+    public static function define(int $roleBit, int $capabilities, ?string $label = null, ?string $name = null): void
     {
         self::$roleCapabilities[$roleBit] = $capabilities;
         if ($label !== null) {
             self::$roleLabels[$roleBit] = $label;
         }
+        if ($name !== null) {
+            self::$roleNames[$roleBit] = $name;
+        }
+    }
+
+    /**
+     * Register a stable name for a capability bit so it can be resolved to a
+     * name for the client (which cannot do 64-bit bitmask checks in JS).
+     * Core registers its capabilities (bits 16..31); the app registers its own
+     * (bits 32..62). Idempotent — safe to call on a double-boot.
+     */
+    public static function defineCapability(int $capabilityBit, string $name): void
+    {
+        self::$capabilityNames[$capabilityBit] = $name;
+    }
+
+    /** @return array<int,string> capabilityBit => name */
+    public static function capabilityNames(): array
+    {
+        return self::$capabilityNames;
     }
 
     /** Add capabilities to a role, keeping whatever was registered before. */
@@ -51,10 +81,18 @@ final class PermissionRegistry
         return self::$roleLabels;
     }
 
+    /** @return array<int,string> roleBit => stable system name */
+    public static function roleNames(): array
+    {
+        return self::$roleNames;
+    }
+
     /** Drop all registrations (test helper). */
     public static function reset(): void
     {
         self::$roleCapabilities = [];
         self::$roleLabels = [];
+        self::$roleNames = [];
+        self::$capabilityNames = [];
     }
 }

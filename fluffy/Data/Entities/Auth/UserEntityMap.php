@@ -15,6 +15,8 @@ class UserEntityMap extends BaseEntityMap
     public const PROPERTY_Active = 'Active';
     public const PROPERTY_EmailConfirmed = 'EmailConfirmed';
     public const PROPERTY_Password = 'Password';
+    public const PROPERTY_IsAdmin = 'IsAdmin';
+    public const PROPERTY_Permissions = 'Permissions';
 
     public static string $Table = 'User';
 
@@ -46,6 +48,7 @@ class UserEntityMap extends BaseEntityMap
             'Active' => CommonMap::$Boolean,
             'EmailConfirmed' => CommonMap::$Boolean,
             'IsAdmin' => CommonMap::$Boolean,
+            'Permissions' => CommonMap::$BigIntDefault0,
             'CreatedOn' => CommonMap::$MicroDateTime,
             'CreatedBy' => CommonMap::$VarChar255Null,
             'UpdatedOn' => CommonMap::$MicroDateTime,

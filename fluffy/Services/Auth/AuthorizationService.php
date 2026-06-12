@@ -16,6 +16,8 @@ use Fluffy\Domain\Configuration\Config;
 use Fluffy\Domain\Message\HttpContext;
 use Fluffy\Models\Auth\AuthResult;
 use Fluffy\Models\Auth\RegisterResult;
+use Fluffy\Security\Capability;
+use Fluffy\Security\Permissions;
 use Fluffy\Services\Session\SessionService;
 use Fluffy\Services\UtilsService;
 
@@ -63,7 +65,29 @@ class AuthorizationService
     public function authorizeAdminRequest(): bool
     {
         $user = $this->getAuthorizedUser();
-        return $user?->IsAdmin ?? false;
+        if ($user === null) {
+            return false;
+        }
+        // IsAdmin kept during the transition; the AccessAdmin capability is the new source of truth.
+        return $user->IsAdmin || Permissions::can($user->Permissions, Capability::AccessAdmin);
+    }
+
+    /** Effective permissions of the authorized user (0 when not authenticated). */
+    public function permissions(): int
+    {
+        return $this->getAuthorizedUser()?->Permissions ?? 0;
+    }
+
+    /** Does the authorized user have the given capability (see Fluffy\Security\Capability)? */
+    public function can(int $capability): bool
+    {
+        return Permissions::can($this->permissions(), $capability);
+    }
+
+    /** Does the authorized user have the given role bit (see Fluffy\Security\Role)? */
+    public function hasRole(int $roleBit): bool
+    {
+        return Permissions::hasRole($this->permissions(), $roleBit);
     }
 
     public function authorizeCSRF(): bool

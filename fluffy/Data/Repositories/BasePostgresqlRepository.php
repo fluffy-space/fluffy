@@ -441,8 +441,6 @@ class BasePostgresqlRepository
         return true;
     }
 
-    // TODO: drop columns
-    // -- ALTER TABLE IF EXISTS public."User" DROP COLUMN IF EXISTS "UserName";
     public function addColumns(array $columnsSchema)
     {
         $tableName = $this->entityMap::$Table;
@@ -475,8 +473,31 @@ class BasePostgresqlRepository
         return true;
     }
 
-    // TODO: drop indexes
-    // -- DROP INDEX IF EXISTS public."User_UX_Email";
+    /**
+     * Drop one or more columns from the entity's table.
+     * @param string[] $columns column names to drop
+     * @param bool $ifExists guard with IF EXISTS on both the table and each column
+     */
+    public function dropColumns(array $columns, bool $ifExists = true): bool
+    {
+        $tableName = $this->entityMap::$Table;
+        $schema = $this->entityMap::$Schema;
+        $ifExistsSql = $ifExists ? ' IF EXISTS' : '';
+        $drops = '';
+        $comma = '';
+        foreach ($columns as $column) {
+            $drops .= "{$comma}DROP COLUMN$ifExistsSql \"{$column}\"";
+            $comma = ',' . PHP_EOL;
+        }
+        $sql = <<<EOD
+        ALTER TABLE$ifExistsSql $schema."$tableName"
+        $drops;
+        EOD;
+
+        $this->connector->query($sql);
+        return true;
+    }
+
     public function addIndexes(
         array $indexesSchema
     ) {
@@ -504,6 +525,25 @@ class BasePostgresqlRepository
             $indexes .= $comma . $indexSql;
         }
         $this->connector->query($indexes);
+        return true;
+    }
+
+    /**
+     * Drop one or more indexes on the entity's table.
+     * @param string[] $names index short-names (same keys passed to addIndexes; the table prefix is added automatically)
+     * @param bool $ifExists guard each drop with IF EXISTS
+     */
+    public function dropIndexes(array $names, bool $ifExists = true): bool
+    {
+        $tableName = $this->entityMap::$Table;
+        $schema = $this->entityMap::$Schema;
+        $ifExistsSql = $ifExists ? ' IF EXISTS' : '';
+        $drops = '';
+        foreach ($names as $name) {
+            $indexName = "{$tableName}_$name";
+            $drops .= "DROP INDEX$ifExistsSql $schema.\"$indexName\";" . PHP_EOL;
+        }
+        $this->connector->query($drops);
         return true;
     }
 

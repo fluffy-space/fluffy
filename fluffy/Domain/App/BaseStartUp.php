@@ -30,6 +30,7 @@ use Fluffy\Domain\App\IStartUp;
 use Fluffy\Domain\Viewi\ViewiFluffyBridge;
 use Fluffy\Migrations\BaseMigrationsContext;
 use Fluffy\Migrations\IMigrationsContext;
+use Fluffy\Security\CorePermissions;
 use Fluffy\Services\Cache\RedisCache;
 use Fluffy\Swoole\Cache\CacheManager;
 use Fluffy\Swoole\Database\IPostgresqlPool;
@@ -132,6 +133,8 @@ class BaseStartUp implements IStartUp
         $serviceProvider->addScoped(MigrationRepository::class);
         $serviceProvider->addScoped(UserTokenRepository::class);
         $serviceProvider->addScoped(UserVerificationCodeRepository::class);
+        // Register the framework's default role -> capability grants (apps extend these).
+        CorePermissions::register();
         /** @insert **/
         // !Do not delete the line above!
         foreach ($this->startUpModules as $startUpClass) {

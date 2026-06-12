@@ -39,6 +39,11 @@ class CommonMap
         'type' => 'bigint',
         'null' => true
     ];
+    public static array $BigIntDefault0 =  [
+        'type' => 'bigint',
+        'null' => false,
+        'default' => '0'
+    ];
     public static array $MicroDateTime = [
         'type' => 'bigint',
         'null' => false,

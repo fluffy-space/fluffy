@@ -67,6 +67,31 @@ abstract class BaseApp
         }
     }
 
+    /**
+     * Inspect migrations across all contexts without applying them.
+     * @return array<int, array{name: string, applied: bool}>
+     */
+    function migrationStatus(): array
+    {
+        $this->setUp();
+        $this->startUp->configureMigrations($this->serviceProvider);
+        // create scope
+        $scope = $this->serviceProvider->createScope();
+        try {
+            /** @var IMigrationsContext[] $migrationsContexts */
+            $migrationsContexts = $scope->serviceProvider->getAll(IMigrationsContext::class);
+            $all = [];
+            foreach ($migrationsContexts as $migrationsContext) {
+                foreach ($migrationsContext->status() as $row) {
+                    $all[] = $row;
+                }
+            }
+            return $all;
+        } finally {
+            $scope->dispose();
+        }
+    }
+
     function rollbackMigration(string $migration)
     {
         $this->setUp();

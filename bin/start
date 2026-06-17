@@ -67,6 +67,32 @@ switch ($inputs[0]) {
                             $app->rollbackMigration($migration);
                             break;
                         }
+                    case 'status': {
+                            $pendingOnly = ($params[1] ?? '') === 'pending';
+                            $config = require $configDir . '/server.php';
+                            $app = $config['app_factory']();
+                            $rows = $app->migrationStatus();
+                            $pending = 0;
+                            foreach ($rows as $row) {
+                                if (!$row['applied']) {
+                                    $pending++;
+                                }
+                                if ($pendingOnly) {
+                                    if (!$row['applied']) {
+                                        echo $row['name'] . PHP_EOL;
+                                    }
+                                } else {
+                                    echo ($row['applied'] ? '[x] ' : '[ ] ') . $row['name'] . PHP_EOL;
+                                }
+                            }
+                            if (!$pendingOnly) {
+                                echo PHP_EOL;
+                            }
+                            echo $pending === 0
+                                ? 'Up to date — no pending migrations.' . PHP_EOL
+                                : "$pending pending migration(s)." . PHP_EOL;
+                            break;
+                        }
                     default:
                         throw new Exception("Command '$command' is not supported.");
                 }

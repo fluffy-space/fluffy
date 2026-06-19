@@ -3,7 +3,7 @@
 namespace Fluffy\Data\Repositories;
 
 use Fluffy\Data\Connector\IClickHouseConnector;
-use Fluffy\Data\Entities\BaseEntity;
+use Fluffy\Data\Entities\BaseClickHouseEntity;
 use Fluffy\Data\Entities\BaseClickHouseEntityMap;
 use Fluffy\Data\Mapper\IMapper;
 
@@ -21,7 +21,7 @@ use Fluffy\Data\Mapper\IMapper;
 class BaseClickHouseRepository
 {
     /**
-     * @param BaseEntity|string $entityType
+     * @param BaseClickHouseEntity|string $entityType
      * @param BaseClickHouseEntityMap|string $entityMap
      */
     public function __construct(
@@ -91,13 +91,13 @@ class BaseClickHouseRepository
         return $result;
     }
 
-    public function firstOrDefault(array $where = [], array $order = [BaseClickHouseEntityMap::PROPERTY_CreatedOn => -1]): ?BaseEntity
+    public function firstOrDefault(array $where = [], array $order = [BaseClickHouseEntityMap::PROPERTY_CreatedOn => -1]): ?BaseClickHouseEntity
     {
         $res = $this->search($where, $order, 1, 1, false);
         return $res['list'][0] ?? null;
     }
 
-    public function getById($id): ?BaseEntity
+    public function getById($id): ?BaseClickHouseEntity
     {
         return $this->firstOrDefault([[BaseClickHouseEntityMap::PROPERTY_Id, '=', $id]]);
     }
@@ -140,7 +140,7 @@ class BaseClickHouseRepository
     // ------------------------------------------------------------------ writes
 
     /** Single-row insert. ClickHouse has no auto-increment — set $entity->Id yourself. */
-    public function create(BaseEntity $entity): bool
+    public function create(BaseClickHouseEntity $entity): bool
     {
         return $this->insertBatch([$entity]) > 0;
     }
@@ -168,7 +168,7 @@ class BaseClickHouseRepository
     }
 
     /** Mutation: ALTER TABLE … UPDATE. Async + heavy; for corrections, not the hot path. */
-    public function update(BaseEntity $entity, ?array $columnsToUpdate = null): bool
+    public function update(BaseClickHouseEntity $entity, ?array $columnsToUpdate = null): bool
     {
         $columns = $columnsToUpdate ?? array_keys($this->entityMap::Columns());
         $set = '';
@@ -187,7 +187,7 @@ class BaseClickHouseRepository
     }
 
     /** Mutation: ALTER TABLE … DELETE. Async + heavy; prefer TTL/partition DROP for retention. */
-    public function delete(BaseEntity $entity): bool
+    public function delete(BaseClickHouseEntity $entity): bool
     {
         $this->connector->command(
             "ALTER TABLE {$this->table()} DELETE WHERE `Id` = " . $this->literal($entity->Id)

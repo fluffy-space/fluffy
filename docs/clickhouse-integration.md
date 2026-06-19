@@ -4,9 +4,11 @@ Design for first-class ClickHouse support in Fluffy core (`vendor/fluffy-space/f
 mirroring the existing PostgreSQL and Redis connection/pool/connector conventions so apps get a
 coroutine-safe ClickHouse client the same way they already get `IConnector` / `RedisConnector`.
 
-This is framework-generic: it provides **connection, pool, connector, and a thin client** — no
-entities, no ORM, no app-specific schema. ClickHouse tables are DDL-managed (see the install
-script's `--schema` option); Fluffy's ORM/codegen/migrations stay PostgreSQL-only.
+This is framework-generic: it provides **connection, pool, connector, a thin client, a light ORM
+layer** (context + entity-map + repository), and **migrations** (the existing SQL migration runner,
+reused — see §6) — but no app-specific schema. ClickHouse DDL is `command()`/`createTable()`/ALTER-
+driven (or applied via the provision script's `--schema`). Fluffy's `php fluffy model` **codegen**
+stays PostgreSQL-only; the migration runner is shared.
 
 ---
 
@@ -36,9 +38,10 @@ problem outweighs that. If a binary fast-path is ever needed, it can be added be
 
 ---
 
-## 2. New core files (mirror of `Swoole/Database` + `Data/Connector`)
+## 2. Core files (mirror of `Swoole/Database` + `Data/Connector` + ORM) — IMPLEMENTED
 
-Placement follows the existing PG layout exactly:
+These files now exist in core (placement mirrors the existing PG layout exactly), and the pool +
+connector + context + repository are gate-registered in `BaseStartUp` (§4):
 
 ```
 fluffy/Swoole/Database/
@@ -49,7 +52,19 @@ fluffy/Swoole/Database/
 fluffy/Data/Connector/
   IClickHouseConnector.php         # query/insert/command/execute    (mirrors IConnector)
   ClickHouseConnector.php          # implements + IDisposable        (mirrors PostgreSqlClientConnector)
+
+fluffy/Data/Context/
+  ClickHouseContext.php            # fluent Query → CH SQL           (mirrors DbContext)
+
+fluffy/Data/Entities/
+  ClickHouseCommonMap.php          # CH column types                 (mirrors CommonMap)
+  BaseClickHouseEntityMap.php      # Engine/OrderBy/PartitionBy/TTL  (mirrors BaseEntityMap)
+
+fluffy/Data/Repositories/
+  BaseClickHouseRepository.php     # CRUD + MergeTree DDL            (mirrors BasePostgresqlRepository)
 ```
+
+The ORM layer (context, entity map, repository) is detailed in §6; connection/pool/connector below.
 
 ### 2.1 `IClickHousePool`
 
@@ -264,6 +279,9 @@ secrets via the vault — same layering as `postgresql` / `redis` / `redisDb`):
     'password' => 'CLICKHOUSE_PASSWORD',
     'timeout'  => 5,
     'poolSize' => 8,
+    // gzip request bodies + responses. Worth it only over a network (CPU cost > loopback saving);
+    // keep false on a localhost/same-box ClickHouse. See §7.
+    'compress' => false,
     // INSERT batching backstop: let the server coalesce small inserts.
     'settings' => ['async_insert' => 1, 'wait_for_async_insert' => 0],
 ],
@@ -271,6 +289,12 @@ secrets via the vault — same layering as `postgresql` / `redis` / `redisDb`):
 
 The block is **optional**. Framework registration is gated on its presence, so existing apps that
 don't configure ClickHouse are unaffected.
+
+**`compress`** — when `true`, the connector gzips every request body (`Content-Encoding: gzip`) and
+asks ClickHouse to gzip responses (`enable_http_compression=1`, Swoole auto-inflates). Measured ~8×
+smaller JSONEachRow at ~109 MB/s (gzip). **Rule of thumb: enable only when the network is slower than
+the compressor** — a clear win on WAN/cross-AZ/metered links, a net loss on localhost (default
+`false`).
 
 ---
 
@@ -359,7 +383,168 @@ upsert job).
 
 ---
 
-## 6. Operational notes
+## 6. ORM layer — context, entity map, repository
+
+A thin ClickHouse ORM mirrors the PostgreSQL one. It reuses the **dialect-agnostic** `Query` /
+`Expression` / `Column` builder and `IMapper`/`StdMapper` unchanged; only the SQL emission and DDL
+differ (backtick identifiers, `database`.`table`, `count()`, MergeTree DDL).
+
+### Entity + map (MergeTree shape instead of PK/FK)
+
+A ClickHouse entity is a plain `BaseEntity`; its map extends `BaseClickHouseEntityMap` and declares
+the engine, sorting key, partitioning and TTL instead of a primary/foreign key. `Columns()` stays the
+source of truth.
+
+```php
+class ClickEventEntity extends BaseEntity
+{
+    public int $ShortUrlId = 0;
+    public string $Country = '';
+    public string $Device = '';
+    public string $IpHash = '';
+    // Id + CreatedOn come from BaseEntity
+}
+
+class ClickEventEntityMap extends BaseClickHouseEntityMap
+{
+    public static string $Table = 'short_url_click_event';
+    public static string $Engine = 'MergeTree';
+    public static ?string $PartitionBy = 'toYYYYMM(toDateTime(CreatedOn / 1000000))';
+    public static array  $OrderBy = ['ShortUrlId', 'CreatedOn'];
+    public static ?string $Ttl = 'toDateTime(CreatedOn / 1000000) + INTERVAL 90 DAY';
+
+    public static function Columns(): array
+    {
+        return [
+            'Id'         => ClickHouseCommonMap::$Id,
+            'ShortUrlId' => ClickHouseCommonMap::$UInt64,
+            'Country'    => ClickHouseCommonMap::$LowCardinality,
+            'Device'     => ClickHouseCommonMap::$LowCardinality,
+            'IpHash'     => ClickHouseCommonMap::$String,
+            'CreatedOn'  => ClickHouseCommonMap::$MicroDateTime, // Int64 micros — matches BaseEntity
+        ];
+    }
+}
+```
+
+`createTable()` renders this to:
+
+```sql
+CREATE TABLE IF NOT EXISTS `short_url_click_event` (
+    `Id` UInt64,
+    `ShortUrlId` UInt64,
+    `Country` LowCardinality(String),
+    `Device` LowCardinality(String),
+    `IpHash` String,
+    `CreatedOn` Int64
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(toDateTime(CreatedOn / 1000000))
+ORDER BY (`ShortUrlId`, `CreatedOn`)
+TTL toDateTime(CreatedOn / 1000000) + INTERVAL 90 DAY
+```
+
+`$Indexes` entries become ClickHouse **data-skipping** indexes
+(`INDEX name expr TYPE minmax GRANULARITY 1`) — not B-trees; the `ORDER BY` key is the primary access
+path.
+
+### Repository (CRUD + bulk + DDL)
+
+`BaseClickHouseRepository` uses the same `#[Inject(['entityType'=>…, 'entityMap'=>…])]` pattern:
+
+```php
+#[Inject(['entityType' => ClickEventEntity::class, 'entityMap' => ClickEventEntityMap::class])]
+class ClickEventRepository extends BaseClickHouseRepository {}
+
+$repo->createTable();                        // emit the MergeTree DDL above
+$repo->insertBatch($events);                 // one JSONEachRow round-trip (the ingest fast path)
+$repo->search([['ShortUrlId','=',$id]], ['CreatedOn'=>-1], 1, 100);   // {list, total}
+$repo->getById($id);
+$repo->deleteWhere([['ShortUrlId','=',$id]]); // ALTER … DELETE mutation
+```
+
+CH-specific behaviour baked in: **no RETURNING** (`Id` is app-assigned — ClickHouse has no
+auto-increment, so set it yourself, e.g. from the Redis `INCR` sequence), **bulk INSERT via
+JSONEachRow**, and **update/delete as `ALTER … UPDATE/DELETE` mutations** (async + heavy — for
+corrections, not hot paths; prefer TTL / `DROP PARTITION` for retention and `ReplacingMergeTree` for
+upserts).
+
+### Context (fluent queries)
+
+For richer reads, register the entity and use the fluent `Query` through `ClickHouseContext` (its own
+registry, parallel to `DbContext::registerEntity`):
+
+```php
+ClickHouseContext::registerEntity(ClickEventEntity::class, ClickEventEntityMap::class);
+
+$rows = $ctx->execute(
+    Query::from(ClickEventEntity::class)
+        ->where(x(c('ShortUrlId'), '=', $id)->and(c('Country'), '=', 'US'))
+        ->orderByDescending('CreatedOn')
+        ->take(50)
+);   // ['list' => ClickEventEntity[], 'total' => int]
+```
+
+For aggregations beyond the builder's reach (GROUP BY, `uniqCombined`, materialized-view reads), call
+`IClickHouseConnector::query()` directly with `{name:Type}` bound params.
+
+### Migrations (reuses the SQL migration system)
+
+ClickHouse migrations reuse Fluffy's migration machinery unchanged — a migration is a `BaseMigration`
+subclass; only its body talks to ClickHouse via an injected repository. The migration **ledger stays
+in PostgreSQL** (`MigrationHistoryEntity`), so CH and PG migrations share one ordered, idempotent
+history and a single `php fluffy migrate`.
+
+```php
+#[Inject(['entityType' => ClickEventEntity::class, 'entityMap' => ClickEventEntityMap::class])]
+class ClickEventRepository extends BaseClickHouseRepository {}
+
+class ClickEventMigration extends BaseMigration
+{
+    public function __construct(
+        MigrationRepository $history,        // PG ledger — tracks this migration like any other
+        private ClickEventRepository $events // DI injects any CH repo / connector / service
+    ) {
+        parent::__construct($history);
+    }
+
+    public function up()   { $this->events->createTable(); }
+    public function down() { $this->events->dropTable(); }   // idempotent (IF EXISTS)
+}
+```
+
+Register the repo in `StartUp` DI (`addScoped(ClickEventRepository::class)`) and the migration in
+`MigrationsContext::run()` (`$this->runMigration(ClickEventMigration::class)`) — exactly like a PG one.
+
+**Table modifications** go in their own follow-up migration via the repo's ALTER helpers:
+
+```php
+public function up()
+{
+    $this->events->addColumns(['Os' => ClickHouseCommonMap::$LowCardinality]);
+    $this->events->addIndex('IX_Country', 'Country', 'set(100)', 4);
+    $this->events->modifyTtl('toDateTime(CreatedOn / 1000000) + INTERVAL 30 DAY');
+}
+public function down()
+{
+    $this->events->dropColumns(['Os']);
+    $this->events->dropIndex('IX_Country');
+}
+```
+
+Helpers: `createTable` / `dropTable` / `tableExists` / `addColumns` / `dropColumns` / `modifyColumn` /
+`renameColumn` / `addIndex` / `dropIndex` / `modifyTtl` / `modifyOrderBy`, plus `alter($action)` as a
+raw escape hatch. (All exercised live in `Tests/ClickHouseSmokeTest.php`.)
+
+**Caveat — no transactions.** ClickHouse can't roll back a multi-statement migration atomically.
+`BaseMigration` still calls `down()` best-effort on failure, but keep each migration to a single DDL
+statement where you can and make `down()` idempotent (the helpers already emit `IF EXISTS` /
+`IF NOT EXISTS`). `ADD/DROP/RENAME COLUMN` and index ops are instant metadata changes; a `MODIFY
+COLUMN` that changes the stored type rewrites parts in the background.
+
+---
+
+## 7. Operational notes
 
 - **Batch, don't drip.** One `INSERT` per HTTP request with many rows. ClickHouse hates
   many-small-inserts (each makes a part); `async_insert=1` in `settings` is the backstop that
@@ -378,7 +563,7 @@ upsert job).
 
 ---
 
-## 7. Install / provisioning
+## 8. Install / provisioning
 
 Two idempotent scripts provision a single-box ClickHouse on **Ubuntu 24.04 (noble)** — usable for both
 this dev machine and the production server. The split separates the OS/server concern from the
@@ -432,7 +617,7 @@ sudo CH_PASSWORD='…' bash scripts/provision-clickhouse-user.sh \
 
 ---
 
-## 8. Implementation checklist
+## 9. Implementation checklist
 
 1. Add the 5 core files in §2 (`Swoole/Database/*`, `Data/Connector/*`).
 2. Gate-register pool (singleton) + connector (scoped) in `BaseStartUp::configure` (§4) with imports.
@@ -442,7 +627,7 @@ sudo CH_PASSWORD='…' bash scripts/provision-clickhouse-user.sh \
 5. (App-side) define DDL via `--schema` or `command('CREATE … IF NOT EXISTS')`; use
    `IClickHouseConnector` from services/cron.
 
-## 9. Risks / call-outs
+## 10. Risks / call-outs
 
 - **Blocking-client trap** — must use `Swoole\Coroutine\Http\Client`; a normal curl/PDO ClickHouse
   client silently destroys server throughput. Enforced by design (§1).

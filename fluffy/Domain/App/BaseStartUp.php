@@ -3,7 +3,13 @@
 namespace Fluffy\Domain\App;
 
 use Fluffy\Data\Connector\IConnector;
+use Fluffy\Data\Connector\IClickHouseConnector;
+use Fluffy\Data\Connector\ClickHouseConnector;
 use Fluffy\Data\Context\DbContext;
+use Fluffy\Data\Context\ClickHouseContext;
+use Fluffy\Data\Repositories\BaseClickHouseRepository;
+use Fluffy\Swoole\Database\IClickHousePool;
+use Fluffy\Swoole\Database\ClickHouseHttpPool;
 use Fluffy\Data\Mapper\IMapper;
 use Fluffy\Data\Mapper\StdMapper;
 use Fluffy\Data\Repositories\BasePostgresqlRepository;
@@ -126,6 +132,16 @@ class BaseStartUp implements IStartUp
         $serviceProvider->setSingleton(RedisPool::class, $redisPool);
         $serviceProvider->addScoped(RedisCache::class);
         $serviceProvider->addScoped(RedisConnector::class);
+        // ClickHouse (optional) — registered only when configured. Pool = singleton (holds the
+        // keep-alive HTTP clients), connector + context = scoped (per-request, auto-disposed).
+        if (isset($this->config->values['clickhouse'])) {
+            $chConfig = $this->config->values['clickhouse'];
+            $chPool = new ClickHouseHttpPool($this->config, $chConfig['poolSize'] ?? ClickHouseHttpPool::DEFAULT_SIZE);
+            $serviceProvider->setSingleton(IClickHousePool::class, $chPool);
+            $serviceProvider->addScoped(IClickHouseConnector::class, ClickHouseConnector::class);
+            $serviceProvider->addScoped(ClickHouseContext::class);
+            $serviceProvider->addScoped(BaseClickHouseRepository::class);
+        }
         $serviceProvider->addScoped(SessionService::class);
         $serviceProvider->addScoped(AuthorizationService::class);
         $serviceProvider->addScoped(UserRepository::class);

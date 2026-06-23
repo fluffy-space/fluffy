@@ -110,7 +110,7 @@ class CronTab
 
         // minutes
         $hrChanged = false;
-        $nowMinute = ($nextTime / 60) % 60;
+        $nowMinute = intdiv($nextTime, 60) % 60;
         $nextMinute = 0;
         $isMinuteStep = false;
         if ($parts[1] === '*') {
@@ -141,7 +141,7 @@ class CronTab
         // hours
         $dayChanged = false;
         $hrSeconds = 60 * 60;
-        $nowHour = ($nextTime / $hrSeconds) % 24;
+        $nowHour = intdiv($nextTime, $hrSeconds) % 24;
         $nextHour = 0;
         $isHourStep = false;
         if ($parts[2] === '*') {

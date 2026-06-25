@@ -80,6 +80,17 @@ class TaskManager
         }
 
         $jobKey = $this->appServer->uniqueId . '|' . implode('|', $crontabItem->task);
+
+        // Seed the monitoring row once so every job shows up (even before its first run).
+        $statusKey = $crontabItem->id();
+        if (!$this->appServer->cronStatusTable->exists($statusKey)) {
+            $this->appServer->cronStatusTable->set($statusKey, [
+                'name' => substr($statusKey, 0, 159),
+                'schedule' => substr($crontabItem->schedule, 0, 63),
+                'lastOk' => -1,
+            ]);
+        }
+
         $currentRunTimestamp = time();
         $nextRunTimestamp = CronTab::getNextRun($crontabItem->schedule, $currentRunTimestamp);
 
@@ -98,6 +109,7 @@ class TaskManager
         $nextRun = ($currentRunTimestamp - time()) * 1000;
         $crontabItem->currentRunTimerInfo->currentRun = $currentRunTimestamp;
         $crontabItem->currentRunTimerInfo->nextRun = $nextRunTimestamp;
+        $this->appServer->cronStatusTable->set($statusKey, ['nextRun' => $currentRunTimestamp]);
         // print_r($crontabItem->currentRunTimerInfo);
         // echo '[TM scheduleCronJob] runCronJob scheduled. ' . ($nextRun / 1000) . PHP_EOL;
         $timerId = Timer::after($nextRun, function () use ($crontabItem) {
@@ -110,9 +122,20 @@ class TaskManager
     {
         $taskMessage = new TaskMessage($this->appServer->uniqueId, $crontabItem);
         $jobKey = $this->appServer->uniqueId . '|' . implode('|', $crontabItem->task);
+
+        // Global admin pause: skip dispatch but keep the timer cycle going so jobs resume cleanly
+        // on the next tick after resume — no server restart needed.
+        $control = $this->appServer->cronControlTable->get('global');
+        if ($control && $control['paused'] === 1) {
+            $this->scheduleCronJob($crontabItem);
+            return;
+        }
+
+        $statusKey = $crontabItem->id();
         $jobRow = $this->appServer->crontabTable->get($jobKey);
         if (!$jobRow || $jobRow['isRunning'] === 0) {
             $this->appServer->crontabTable->set($jobKey, ['isRunning' => 1]);
+            $this->appServer->cronStatusTable->set($statusKey, ['isRunning' => 1, 'lastStart' => time()]);
             $this->lates[$jobKey] = false;
             $this->lastRuns[$jobKey] = time();
             // echo "[TaskManager] $jobKey runCronJob dispatch." . PHP_EOL;
@@ -132,13 +155,34 @@ class TaskManager
         if ($message->data instanceof CronTabItem) {
             [$class, $method] = $message->data->task;
             $jobKey = $message->dispatcherUID . '|' . implode('|', $message->data->task);
+            $statusKey = $message->data->id();
             $timestamp = time();
             $time = date('Y-m-d H:i:s', $timestamp);
             echo "[Crontab] +$time $jobKey starting on worker {$this->workerId} [{$this->uniqueId}]" . PHP_EOL;
-            $jobRow = $this->appServer->crontabTable->get($jobKey);
-            $this->appServer->app->task($class, $method, [...$message->data->params, $message->data->currentRunTimerInfo]);
+            $startMs = (int)(microtime(true) * 1000);
+            $result = $this->appServer->app->runTask($class, $method, [...$message->data->params, $message->data->currentRunTimerInfo]);
+            $durationMs = (int)(microtime(true) * 1000) - $startMs;
+            $finishTs = time();
             // $this->appServer->crontabTable->delete($jobKey);
-            $this->appServer->crontabTable->set($jobKey, ['lastRun' => $timestamp, 'isRunning' => 0]);
+            $this->appServer->crontabTable->set($jobKey, ['lastRun' => $finishTs, 'isRunning' => 0]);
+
+            // Monitoring: record finish + outcome (failures are no longer swallowed).
+            $this->appServer->cronStatusTable->set($statusKey, [
+                'isRunning' => 0,
+                'lastFinish' => $finishTs,
+                'lastDurationMs' => $durationMs,
+                'lastOk' => $result['ok'] ? 1 : 0,
+            ]);
+            $this->appServer->cronStatusTable->incr($statusKey, 'runCount');
+            if ($result['ok']) {
+                $this->appServer->cronStatusTable->set($statusKey, ['lastError' => '']);
+            } else {
+                $this->appServer->cronStatusTable->set($statusKey, [
+                    'lastError' => substr((string)$result['error'], 0, 255),
+                    'lastFailure' => $finishTs,
+                ]);
+                $this->appServer->cronStatusTable->incr($statusKey, 'failCount');
+            }
             $time = date('Y-m-d H:i:s', time());
             echo "[Crontab] -$time $jobKey finished on worker {$this->workerId} [{$this->uniqueId}]." . PHP_EOL;
             $this->appServer->iteration->sub();
@@ -204,6 +248,11 @@ class TaskManager
         }
         foreach ($keys as $key) {
             $this->appServer->crontabTable->del($key);
+        }
+        // Clear stuck "running" flags left by a crashed/reloaded cron worker; keep counters/history.
+        // cronControlTable (pause flag) is intentionally NOT touched so an admin pause survives reloads.
+        foreach ($this->appServer->cronStatusTable as $statusKey => $_) {
+            $this->appServer->cronStatusTable->set($statusKey, ['isRunning' => 0]);
         }
         $this->appServer->iteration->set(0);
     }

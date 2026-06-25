@@ -17,9 +17,12 @@ use Swoole\WebSocket\Server;
 class AppServer
 {
     const PING_DELAY_MS = 25000;
+    const CRON_HEARTBEAT_MS = 5000;
     public Server $server;
     public BaseApp $app;
     public Table $crontabTable;
+    public Table $cronStatusTable;
+    public Table $cronControlTable;
     public Table $syncTable;
     public Table $timeTable;
     public Atomic $iteration;
@@ -58,6 +61,31 @@ class AppServer
         $this->crontabTable->column('isRunning', Swoole\Table::TYPE_INT);
         $this->crontabTable->column('lastRun', Swoole\Table::TYPE_INT);
         $this->crontabTable->create();
+
+        // Per-job live status for admin monitoring, keyed by CronTabItem::id() (stable across
+        // restarts / shared across workers). Seeded at startCrontab so even never-run jobs show.
+        $this->cronStatusTable = new Swoole\Table(1024);
+        $this->cronStatusTable->column('name', Swoole\Table::TYPE_STRING, 160);
+        $this->cronStatusTable->column('schedule', Swoole\Table::TYPE_STRING, 64);
+        $this->cronStatusTable->column('isRunning', Swoole\Table::TYPE_INT);
+        $this->cronStatusTable->column('lastStart', Swoole\Table::TYPE_INT);
+        $this->cronStatusTable->column('lastFinish', Swoole\Table::TYPE_INT);
+        $this->cronStatusTable->column('lastDurationMs', Swoole\Table::TYPE_INT);
+        $this->cronStatusTable->column('lastOk', Swoole\Table::TYPE_INT); // 1 ok / 0 failed / -1 never run
+        $this->cronStatusTable->column('lastError', Swoole\Table::TYPE_STRING, 256);
+        $this->cronStatusTable->column('lastFailure', Swoole\Table::TYPE_INT);
+        $this->cronStatusTable->column('runCount', Swoole\Table::TYPE_INT);
+        $this->cronStatusTable->column('failCount', Swoole\Table::TYPE_INT);
+        $this->cronStatusTable->column('nextRun', Swoole\Table::TYPE_INT);
+        $this->cronStatusTable->create();
+
+        // Process-group-wide cron control/health. NOT cleared by resetCronTable() so a pause set
+        // by an admin survives cron-worker reloads. Row key: 'global'.
+        $this->cronControlTable = new Swoole\Table(8);
+        $this->cronControlTable->column('paused', Swoole\Table::TYPE_INT);     // 1 = pause ALL jobs
+        $this->cronControlTable->column('heartbeat', Swoole\Table::TYPE_INT);  // unix ts, refreshed by cron worker
+        $this->cronControlTable->column('updatedBy', Swoole\Table::TYPE_STRING, 64);
+        $this->cronControlTable->create();
 
         $this->syncTable = new Swoole\Table(1024);
         $this->syncTable->column('value', Swoole\Table::TYPE_INT);
@@ -216,6 +244,13 @@ class AppServer
                 // last request/task worker
                 echo "[Task] starting cron in $workerType $workerId\n";
                 $this->app->startCrontab();
+
+                // Cron-loop liveness heartbeat: admins read this to tell the loop itself is alive
+                // (independent of whether any individual job ran recently). Seed once immediately.
+                $this->cronControlTable->set('global', ['heartbeat' => time()]);
+                Swoole\Timer::tick(self::CRON_HEARTBEAT_MS, function () {
+                    $this->cronControlTable->set('global', ['heartbeat' => time()]);
+                });
 
                 // test
                 // CronTabTest::TEST();

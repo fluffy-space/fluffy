@@ -44,6 +44,7 @@ use Fluffy\Swoole\Database\PostgresPDOPool;
 use Fluffy\Swoole\RateLimit\IRateLimitService;
 use Fluffy\Swoole\RateLimit\RedisRateLimitService;
 use Fluffy\Swoole\RateLimit\SwooleTableRateLimitService;
+use Fluffy\Swoole\Task\CronMonitorService;
 use Fluffy\Swoole\Task\TaskManager;
 use Fluffy\Swoole\Websocket\HubServer;
 use Swoole\Database\PDOConfig;
@@ -93,6 +94,7 @@ class BaseStartUp implements IStartUp
         QueryFunctions::touch();
         $swooleVersion = explode('.', phpversion('swoole') ?? '5')[0];
         $serviceProvider->addSingleton(TaskManager::class);
+        $serviceProvider->addSingleton(CronMonitorService::class);
         $serviceProvider->addSingleton(CacheManager::class);
         // rate limiter
         $serviceProvider->addSingleton(IRateLimitService::class, RedisRateLimitService::class);

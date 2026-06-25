@@ -251,19 +251,31 @@ abstract class BaseApp
 
     function task(string $class, string $method, array $params)
     {
+        $this->runTask($class, $method, $params);
+    }
+
+    /**
+     * Run a task in a fresh DI scope and report the outcome. Exceptions are still logged (as before)
+     * but also returned so callers — e.g. the cron path — can record success/failure into the status
+     * table instead of having failures silently swallowed.
+     *
+     * @return array{ok: bool, error: ?string}
+     */
+    function runTask(string $class, string $method, array $params): array
+    {
         // create scope
         $scope = $this->serviceProvider->createScope();
         try {
             $taskInstance = $scope->serviceProvider->get($class);
             $taskInstance->{$method}(...$params);
+            return ['ok' => true, 'error' => null];
         } catch (Throwable $t) {
             echo '[Server] Task error.' . PHP_EOL;
             echo $t->__toString() . PHP_EOL;
+            return ['ok' => false, 'error' => $t->getMessage()];
         } finally {
             // dispose scope
-            // unset($requestDelegate);
             $scope->dispose();
-            // unset($scope);
         }
     }
 

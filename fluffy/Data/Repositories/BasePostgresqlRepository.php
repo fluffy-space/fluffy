@@ -287,13 +287,17 @@ class BasePostgresqlRepository
         $entity->UpdatedOn = $now;
         $keyName = $this->entityMap::$PrimaryKeys[0];
         $hasCustom = $columnsToUpdate !== null;
+        $allColumns = $this->entityMap::Columns();
         if ($hasCustom) {
             $columnsToUpdate[] = 'UpdatedOn';
             $columnsToUpdate[] = 'UpdatedBy';
         }
-        foreach ($columnsToUpdate ?? $this->entityMap::Columns() as $property => $columnMeta) {
+        foreach ($columnsToUpdate ?? $allColumns as $property => $columnMeta) {
             if ($hasCustom) {
+                // For a custom list the entries are property names; resolve the
+                // real column meta from the map (needed for the bytea check).
                 $property = $columnMeta;
+                $columnMeta = $allColumns[$property] ?? [];
             }
             if ($property !== $keyName) {
                 $value = $entity->{$property};
@@ -305,7 +309,7 @@ class BasePostgresqlRepository
                     $value = $entity->{$property};
                 } else if (is_float($entity->{$property})) {
                     $value = number_format($entity->{$property}, 8, '.', '');
-                } elseif ($columnMeta['type'] === 'bytea') {
+                } elseif (($columnMeta['type'] ?? null) === 'bytea') {
                     $value = "decode('" . bin2hex($entity->{$property}) . "', 'hex')";
                 } else {
                     $value = $this->connector->escapeLiteral($entity->{$property});

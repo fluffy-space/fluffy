@@ -81,6 +81,15 @@ emit_caddy_site() {
 ${domains} {
   ${TLS_LINE}
 
+  # Fingerprint hardening — strip stack-identifying response headers so nothing
+  # reveals PHP / Swoole / the proxy. Applies site-wide (proxied + static).
+  header {
+    -Server         # Swoole emits "swoole-http-server"
+    -X-Powered-By   # in case any PHP SAPI adds it
+    -Via            # Caddy proxy marker
+    -Server-Timing  # internal app timing hint
+  }
+
   encode zstd gzip
 
   root * ${root}

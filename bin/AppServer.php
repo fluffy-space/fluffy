@@ -267,6 +267,11 @@ class AppServer
             Swoole\Coroutine::sleep(0.01);
         }
         $httpResponse = new SwooleHttpResponse($response);
+        // Fingerprint hardening: Swoole defaults the Server header to "swoole-http-server".
+        // Override it up-front so it never leaks (config 'serverHeader'; '' blanks it).
+        // NOTE: this covers dynamic responses; Swoole's built-in static handler bypasses
+        // onRequest, so the edge proxy (Caddy) remains the authoritative header strip.
+        $response->header('Server', $this->config['serverHeader'] ?? '');
         $this->app->handle(new HttpContext(
             new SwooleHttpRequest(
                 $request,

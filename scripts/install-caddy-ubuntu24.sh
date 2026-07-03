@@ -101,11 +101,21 @@ $SUDO mkdir -p /etc/caddy/sites
 MAIN=/etc/caddy/Caddyfile
 IMPORT_LINE='import /etc/caddy/sites/*.caddy'
 
+# Detect WSL: its localhost-forwarding relay only mirrors IPv4 (0.0.0.0) listeners
+# onto the Windows host's 127.0.0.1. Caddy's default bind is a dual-stack ::/[::]
+# socket, which the relay ignores — so Windows can't reach Caddy at all. The tcp4/
+# network prefix forces a true AF_INET socket. (Bare `default_bind 0.0.0.0` is NOT
+# enough: Caddy normalizes it back to a dual-stack socket.) Real Linux servers skip
+# this so they keep serving IPv6.
+IS_WSL=0
+grep -qiE 'microsoft|wsl' /proc/sys/kernel/osrelease 2>/dev/null && IS_WSL=1
+
 # Build the global options block (email only if provided).
 GLOBAL="{"$'\n'
 [ -n "$CADDY_EMAIL" ] && GLOBAL+=$'\t'"email ${CADDY_EMAIL}"$'\n'
 GLOBAL+=$'\t'"grace_period 30s"$'\n'
 GLOBAL+=$'\t'"admin ${CADDY_ADMIN}"$'\n'
+[ "$IS_WSL" = "1" ] && GLOBAL+=$'\t'"default_bind tcp4/0.0.0.0   # WSL: IPv4-only so Windows localhost-forwarding can reach Caddy"$'\n'
 GLOBAL+="}"
 
 if [ ! -s "$MAIN" ] || ! grep -q '^import /etc/caddy/sites/' "$MAIN" 2>/dev/null; then
@@ -121,6 +131,12 @@ else
     log "$MAIN already managed (import present) — leaving global options untouched"
     [ -n "$CADDY_EMAIL" ] && grep -q "email ${CADDY_EMAIL}" "$MAIN" 2>/dev/null \
         || warn "set 'email ${CADDY_EMAIL:-you@example.com}' in the global block of $MAIN if not already there"
+    # On WSL, ensure the IPv4-only bind is present even in a pre-existing global block
+    # (see note above; the restart below rebinds the socket family).
+    if [ "$IS_WSL" = "1" ] && ! grep -q 'default_bind' "$MAIN" 2>/dev/null; then
+        log "WSL: adding 'default_bind tcp4/0.0.0.0' to the existing global block in $MAIN"
+        $SUDO sed -i '/grace_period 30s/a\\tdefault_bind tcp4/0.0.0.0   # WSL: IPv4-only so Windows localhost-forwarding can reach Caddy' "$MAIN"
+    fi
 fi
 
 # ----------------------------------------------------------------------------- 3. firewall

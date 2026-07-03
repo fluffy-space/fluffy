@@ -63,7 +63,18 @@ class PostgreSqlPDOConnector implements IConnector, IDisposable
 
     public function escapeLiteral($value): string
     {
-        return $this->get()->quote($value, PDO::PARAM_STR);
+        // Swoole's PDOProxy is strict-typed: quote() rejects non-strings, so
+        // scalars must be handled here (int/float are safe SQL literals as-is).
+        if (is_int($value) || is_float($value)) {
+            return (string) $value;
+        }
+        if (is_bool($value)) {
+            return $value ? 'true' : 'false';
+        }
+        if ($value === null) {
+            return 'NULL';
+        }
+        return $this->get()->quote((string) $value, PDO::PARAM_STR);
     }
 
     public function dispose()

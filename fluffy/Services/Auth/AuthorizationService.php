@@ -38,7 +38,8 @@ class AuthorizationService
         protected ?HttpContext $httpContext,
         protected UserRepository $users,
         protected UserTokenRepository $userTokens,
-        protected UserVerificationCodeRepository $userVerifications
+        protected UserVerificationCodeRepository $userVerifications,
+        protected ?IUserRegistrationHook $registrationHook = null
     ) {
     }
 
@@ -207,6 +208,7 @@ class AuthorizationService
         $result->Success = $this->users->create($user);
         if ($result->Success) {
             $result->User = $user;
+            $this->registrationHook?->onUserRegistered($user);
         }
         return $result;
     }

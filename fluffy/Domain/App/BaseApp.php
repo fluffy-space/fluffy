@@ -285,7 +285,7 @@ abstract class BaseApp
      */
     function onPipeMessage(TaskMessage $message)
     {
-        $this->taskManager->processMessage($message);
+        $this->taskManager?->processMessage($message);
     }
 
     public function use($middleware)

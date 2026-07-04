@@ -46,9 +46,37 @@ class NginxBuilder
         echo "[NginxBuilder] saving into $nginxConfigPath" . PHP_EOL;
         file_put_contents($nginxConfigPath, $template);
         $linkPath = "/etc/nginx/sites-enabled/$domain";
-        symlink($nginxConfigPath, $linkPath);
+        if (!file_exists($linkPath)) {
+            symlink($nginxConfigPath, $linkPath);
+        }
         echo "[NginxBuilder] Link check for $linkPath = " . readlink($linkPath) . PHP_EOL;
-        echo "[NginxBuilder] Reloading Nginx server." . PHP_EOL;
-        System('sudo service nginx reload');
+
+        // Prefer OpenResty (nginx + Lua — the edge we standardised on); fall back
+        // to stock nginx if OpenResty isn't installed. Validate before reloading
+        // so a bad site file never takes the live server down.
+        $openresty = '/usr/local/openresty/bin/openresty';
+        if (is_file($openresty)) {
+            $bin = $openresty;
+            $service = 'openresty';
+        } else {
+            $bin = 'nginx';
+            $service = 'nginx';
+        }
+
+        echo "[NginxBuilder] Validating config ($bin -t)." . PHP_EOL;
+        System("sudo $bin -t 2>&1", $validateCode);
+        if ($validateCode !== 0) {
+            die("[NginxBuilder] Invalid config — NOT reloading. Fix $nginxConfigPath and retry." . PHP_EOL);
+        }
+
+        echo "[NginxBuilder] Reloading $service server." . PHP_EOL;
+        System("sudo systemctl reload $service 2>&1", $reloadCode);
+        if ($reloadCode !== 0) {
+            // systemctl may be unavailable (e.g. WSL without systemd) — fall back to the service wrapper.
+            System("sudo service $service reload 2>&1", $reloadCode);
+        }
+        if ($reloadCode !== 0) {
+            echo "[NginxBuilder] Reload failed — is $service running? Try: sudo systemctl start $service" . PHP_EOL;
+        }
     }
 }

@@ -270,7 +270,7 @@ class AppServer
         // Fingerprint hardening: Swoole defaults the Server header to "swoole-http-server".
         // Override it up-front so it never leaks (config 'serverHeader'; '' blanks it).
         // NOTE: this covers dynamic responses; Swoole's built-in static handler bypasses
-        // onRequest, so the edge proxy (Caddy) remains the authoritative header strip.
+        // onRequest, so the edge proxy (nginx/OpenResty) remains the authoritative header strip.
         $response->header('Server', $this->config['serverHeader'] ?? '');
         $this->app->handle(new HttpContext(
             new SwooleHttpRequest(
@@ -333,6 +333,10 @@ class AppServer
 
     public function onPipeMessage($server, $src_worker_id, $message)
     {
+        while (!isset($this->app)) {
+            echo "[Server] Incoming Message waiting for initializing {$this->server->worker_id}..\n";
+            Swoole\Coroutine::sleep(0.01);
+        }
         $this->app->onPipeMessage($message);
     }
 

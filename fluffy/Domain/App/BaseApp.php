@@ -288,6 +288,7 @@ abstract class BaseApp
         while (!isset($this->taskManager)) {
             echo "[Server] Incoming Pipe Message waiting for initializing BaseApp..\n";
             \Swoole\Coroutine::sleep(0.01);
+            $this->taskManager = $this->serviceProvider->get(TaskManager::class);
         }
         $this->taskManager?->processMessage($message);
     }

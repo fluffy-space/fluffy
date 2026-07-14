@@ -30,13 +30,25 @@ class NginxBuilder
         // http context). Derive it from the FULL domain — the first label alone
         // collides for e.g. dev.urlicer.com + dev.ivi.to -> both "dev".
         $upstream = preg_replace('/[^a-z0-9]+/i', '_', $domain);
+        // Serve the real cert if certbot already issued one for this domain
+        // (`certbot certonly --webroot -w <root> -d <domain>`); otherwise fall
+        // back to the dev self-signed pair so `openresty -t` passes on a box
+        // with no cert yet. Re-run this command after the first issuance to
+        // switch the site over — certbot's --nginx installer plugin is NOT used
+        // (it only understands stock nginx, and would be clobbered here anyway).
+        $letsEncryptDir = "/etc/letsencrypt/live/$domain";
+        $useLetsEncrypt = is_readable("$letsEncryptDir/fullchain.pem") && is_readable("$letsEncryptDir/privkey.pem");
+        $sslCert = $useLetsEncrypt ? "$letsEncryptDir/fullchain.pem" : '/etc/ssl/certs/nginx-selfsigned.crt';
+        $sslKey = $useLetsEncrypt ? "$letsEncryptDir/privkey.pem" : '/etc/ssl/private/nginx-selfsigned.key';
+
         echo "[NginxBuilder] Processing nginx for:" . PHP_EOL;
         print_r([
             'domain' => $domain,
             'port' => $port,
             'rootPath' => $rootPath,
             'upstream' => $upstream,
-            'staticFiles' => $staticFiles
+            'staticFiles' => $staticFiles,
+            'cert' => $sslCert . ($useLetsEncrypt ? " (Let's Encrypt)" : ' (self-signed — run certbot for a public domain)')
         ]);
         $templatePath = '/setup/nginx.conf';
         $template = file_get_contents(__DIR__ . $templatePath);
@@ -45,6 +57,8 @@ class NginxBuilder
         $template = str_replace('_ROOT_', $rootPath, $template);
         $template = str_replace('_DOMAIN_', $domain, $template);
         $template = str_replace('_STATIC_FILES_', $staticFiles, $template);
+        $template = str_replace('_SSL_CERT_', $sslCert, $template);
+        $template = str_replace('_SSL_KEY_', $sslKey, $template);
         $nginxConfigPath = "/etc/nginx/sites-available/$domain";
         echo "[NginxBuilder] saving into $nginxConfigPath" . PHP_EOL;
         file_put_contents($nginxConfigPath, $template);

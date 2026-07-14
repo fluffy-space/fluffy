@@ -26,7 +26,10 @@ class NginxBuilder
             // sudo chmod -R 0777 /home/ivan/nutritionFiles
         }
         $staticFiles = realpath($this->serverConfig['static_files']);
-        $upstream = explode('.', $domain)[0];
+        // Upstream name must be unique across every site file (they all share one
+        // http context). Derive it from the FULL domain — the first label alone
+        // collides for e.g. dev.urlicer.com + dev.ivi.to -> both "dev".
+        $upstream = preg_replace('/[^a-z0-9]+/i', '_', $domain);
         echo "[NginxBuilder] Processing nginx for:" . PHP_EOL;
         print_r([
             'domain' => $domain,

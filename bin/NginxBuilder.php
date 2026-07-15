@@ -12,6 +12,42 @@ class NginxBuilder
     {
     }
 
+    /**
+     * One `server` line per instance, standbys marked `down` so only the live release gets
+     * traffic. The instance we're generating from wins (its release dir names the color);
+     * failing that, whichever instance owns $port — which is how a dev box, running from the
+     * repo dir rather than a colored release, still marks the right one active.
+     *
+     * With no `instances` configured this degrades to the single-server upstream.
+     */
+    private function upstreamServers(int $port): string
+    {
+        $instances = $this->serverConfig['instances'] ?? [];
+        if (count($instances) === 0) {
+            return "  server 127.0.0.1:$port fail_timeout=1;";
+        }
+
+        $active = basename($this->baseDir);
+        if (!isset($instances[$active])) {
+            $active = null;
+            foreach ($instances as $color => $instance) {
+                if (($instance['port'] ?? null) === $port) {
+                    $active = $color;
+                    break;
+                }
+            }
+            $active ??= array_key_first($instances);
+        }
+
+        $lines = [];
+        foreach ($instances as $color => $instance) {
+            $lines[] = $color === $active
+                ? "  server 127.0.0.1:{$instance['port']} fail_timeout=1;   # $color (ACTIVE)"
+                : "  server 127.0.0.1:{$instance['port']} down;             # $color (standby)";
+        }
+        return implode(PHP_EOL, $lines);
+    }
+
     public function build()
     {
         echo "[NginxBuilder] starting" . PHP_EOL;
@@ -60,7 +96,7 @@ class NginxBuilder
         ]);
         $upstreamBlock = file_get_contents(__DIR__ . '/setup/nginx-upstream.conf');
         $upstreamBlock = str_replace('_UPSTREAM_', $upstream, $upstreamBlock);
-        $upstreamBlock = str_replace('_PORT_', $port, $upstreamBlock);
+        $upstreamBlock = str_replace('_SERVERS_', $this->upstreamServers($port), $upstreamBlock);
 
         $templatePath = '/setup/nginx.conf';
         $template = file_get_contents(__DIR__ . $templatePath);

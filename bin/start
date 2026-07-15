@@ -158,6 +158,14 @@ switch ($inputs[0]) {
             (new NginxBuilder($currentDir, $params, $config))->build();
             break;
         }
+    case 'service': {
+            // vendor autoload
+            require $currentDir . '/vendor/autoload.php';
+            require __DIR__ . '/ServiceBuilder.php';
+            $config = require $configDir . '/server.php';
+            (new ServiceBuilder($currentDir, $params, $config))->build();
+            break;
+        }
     default:
         die("[start] Unrecognizable command '{$inputs[0]}'" . PHP_EOL);
 }

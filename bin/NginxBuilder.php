@@ -26,10 +26,18 @@ class NginxBuilder
             // sudo chmod -R 0777 /home/ivan/nutritionFiles
         }
         $staticFiles = realpath($this->serverConfig['static_files']);
-        // Upstream name must be unique across every site file (they all share one
-        // http context). Derive it from the FULL domain — the first label alone
-        // collides for e.g. dev.urlicer.com + dev.ivi.to -> both "dev".
-        $upstream = preg_replace('/[^a-z0-9]+/i', '_', $domain);
+        // `upstream` in configs/server.php is OPTIONAL and picks one of two layouts:
+        //
+        //  set   -> one upstream per APP, shared by all its domains, in its own conf.d file.
+        //           Every site proxy_passes to that name, so the app port lives in ONE place
+        //           and a blue/green rotation swings every domain at once. A domain generated
+        //           months later still agrees, since the name comes from config, not the host.
+        //  unset -> legacy: one upstream per DOMAIN, inlined in the site file (below). Name is
+        //           derived from the FULL domain — the first label alone collides for e.g.
+        //           dev.urlicer.com + dev.ivi.to -> both "dev" — and every site file shares one
+        //           http context, so a collision is a config error.
+        $sharedUpstream = $this->serverConfig['upstream'] ?? null;
+        $upstream = $sharedUpstream ?? preg_replace('/[^a-z0-9]+/i', '_', $domain);
         // Serve the real cert if certbot already issued one for this domain
         // (`certbot certonly --webroot -w <root> -d <domain>`); otherwise fall
         // back to the dev self-signed pair so `openresty -t` passes on a box
@@ -50,10 +58,33 @@ class NginxBuilder
             'staticFiles' => $staticFiles,
             'cert' => $sslCert . ($useLetsEncrypt ? " (Let's Encrypt)" : ' (self-signed — run certbot for a public domain)')
         ]);
+        $upstreamBlock = file_get_contents(__DIR__ . '/setup/nginx-upstream.conf');
+        $upstreamBlock = str_replace('_UPSTREAM_', $upstream, $upstreamBlock);
+        $upstreamBlock = str_replace('_PORT_', $port, $upstreamBlock);
+
         $templatePath = '/setup/nginx.conf';
         $template = file_get_contents(__DIR__ . $templatePath);
+
+        if ($sharedUpstream === null) {
+            // Legacy layout: inline the block at the top of the site file. Drop the template's
+            // `##` header — it documents the standalone conf.d file, not this.
+            $inline = preg_replace('/^##.*\R/m', '', $upstreamBlock);
+            $template = trim($inline) . PHP_EOL . PHP_EOL . $template;
+        } else {
+            // Shared upstream (conf.d) — create-if-missing, never overwrite. Under blue/green
+            // this file holds the ACTIVE port, so regenerating a site config (e.g. adding a
+            // short domain) must not reset traffic to the other release.
+            $upstreamConfigPath = "/etc/nginx/conf.d/10-upstream-$upstream.conf";
+            if (file_exists($upstreamConfigPath)) {
+                echo "[NginxBuilder] upstream exists, leaving as-is: $upstreamConfigPath" . PHP_EOL;
+                echo "[NginxBuilder]   (it owns the active port — edit it directly to repoint traffic)" . PHP_EOL;
+            } else {
+                echo "[NginxBuilder] writing upstream $upstream -> 127.0.0.1:$port into $upstreamConfigPath" . PHP_EOL;
+                file_put_contents($upstreamConfigPath, $upstreamBlock);
+            }
+        }
+
         $template = str_replace('_UPSTREAM_', $upstream, $template);
-        $template = str_replace('_PORT_', $port, $template);
         $template = str_replace('_ROOT_', $rootPath, $template);
         $template = str_replace('_DOMAIN_', $domain, $template);
         $template = str_replace('_STATIC_FILES_', $staticFiles, $template);

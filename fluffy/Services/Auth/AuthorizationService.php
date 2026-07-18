@@ -134,6 +134,15 @@ class AuthorizationService
 
     public function authorizeUser(UserEntity $user, bool $rememberMe = false, bool $setCookie = true): ?UserTokenEntity
     {
+        // Re-login from a context that already holds a valid AUTH token: the new
+        // cookie set below replaces it, so that old token is abandoned — it can
+        // never be presented again from this client. Delete it, so signing in
+        // again on the same device doesn't leave a dead session behind (this is
+        // what made tokens pile up). Only when we actually replace the cookie.
+        if ($setCookie && ($this->userToken !== null || $this->authorizeRequest()) && $this->userToken !== null) {
+            $this->userTokens->delete($this->userToken);
+            $this->userToken = null;
+        }
         $token = new UserTokenEntity();
         $token->UserId = $user->Id;
         $token->Expire = time() + 60 * 60 * 24 * 30;

@@ -141,12 +141,48 @@ class AuthorizationService
         $token->Token = UtilsService::randomHex(64);
         $token->TokenHash = $this->hashToken($token->Token);
         $this->userTokens->create($token);
+        $this->enforceSessionLimit($user->Id);
         if ($setCookie) {
             $integrityHash = hash('crc32', $token->Token . $token->UserId . $this->config->values['hashSalt']);
             $authCookieValue = "{$token->Token}.{$token->UserId}.$integrityHash";
             $this->httpContext->response->setCookie(self::COOKIE_NAME, $authCookieValue, time() + 60 * 60 * 24 * 30, '/', '', 1, 1);
         }
         return $token;
+    }
+
+    /**
+     * Cap the number of concurrent login sessions per user. Called right after a
+     * new token is minted: keeps the N most-recent tokens (config
+     * 'maxUserSessions', falling back to MAX_USER_TOKENS) and deletes the rest —
+     * so logging in on a new device silently evicts the least-recent session and
+     * accumulated stale/expired tokens are cleaned up. A limit <= 0 = unlimited.
+     *
+     * NB: this only prunes users who log in. TODO: a cheap periodic GC sweep
+     * (DELETE FROM UserToken WHERE Expire < now) to reclaim expired tokens for
+     * dormant users who never log in again — pure row hygiene, not enforcement
+     * (expired tokens already grant nothing at the auth check). Fold into an
+     * existing cleanup cron if the table ever grows.
+     */
+    private function enforceSessionLimit(int $userId): void
+    {
+        $max = (int)($this->config->values['maxUserSessions'] ?? self::MAX_USER_TOKENS);
+        if ($max <= 0) {
+            return;
+        }
+        $result = $this->userTokens->search(
+            [[UserTokenEntityMap::PROPERTY_UserId, $userId]],
+            [UserTokenEntityMap::PROPERTY_CreatedOn => -1],
+            1,
+            null,
+            false
+        );
+        $tokens = $result['list'];
+        if (count($tokens) <= $max) {
+            return;
+        }
+        foreach (array_slice($tokens, $max) as $stale) {
+            $this->userTokens->delete($stale);
+        }
     }
 
     public function logout()

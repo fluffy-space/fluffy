@@ -7,6 +7,7 @@ use Fluffy\Data\Entities\CommonMap;
 
 class UserTokenEntityMap extends BaseEntityMap
 {
+    public const PROPERTY_UserId = 'UserId';
     public const PROPERTY_TokenHash = 'TokenHash';
 
     public static string $Table = 'UserToken';

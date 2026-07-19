@@ -32,6 +32,18 @@ fi
 export HOME="$ACME_HOME"   # acme.sh keys its state off HOME
 mkdir -p "$CERT_DIR"
 
+# Serialize per-host issuance. Two acme.sh runs sharing $ACME_HOME race on the SAME order/account
+# files and corrupt each other — the loser hits finalize after the order is already valid and dies
+# with "orderNotReady" (403), which would otherwise clobber a perfectly-good issued cert. flock waits
+# for any in-flight run for THIS host; the second caller then finds the cert already valid (acme rc=2)
+# and just re-deploys it — idempotent, so both callers succeed instead of one wrecking the other.
+LOCK="${ACME_HOME}/.issue.${HOST}.lock"
+exec 9>"$LOCK" || { echo "[cert] cannot open lock ${LOCK}" >&2; exit 1; }
+if ! flock -w 300 9; then
+  echo "[cert] timed out (300s) waiting for another in-flight issuance of ${HOST}" >&2
+  exit 1
+fi
+
 echo "[cert] issuing ${HOST} via HTTP-01 (webroot ${WEBROOT})..."
 # rc 0 = issued; 2 = already valid / not yet due (skip). Both fine — install-cert (re)deploys whatever
 # exists. Any other code is a real failure.

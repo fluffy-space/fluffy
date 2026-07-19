@@ -9,6 +9,7 @@ class UserTokenEntityMap extends BaseEntityMap
 {
     public const PROPERTY_UserId = 'UserId';
     public const PROPERTY_TokenHash = 'TokenHash';
+    public const PROPERTY_Expire = 'Expire';
 
     public static string $Table = 'UserToken';
     public static array $Indexes = [

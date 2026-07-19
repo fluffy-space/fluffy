@@ -428,6 +428,26 @@ class BasePostgresqlRepository
         return false;
     }
 
+    /**
+     * Bulk-delete every row matching $where (same shape as search()'s $where,
+     * e.g. [[Map::PROPERTY_Expire, '<', $cutoff]]) in a single statement, and
+     * return the number of rows removed.
+     *
+     * Refuses an empty / blank WHERE and returns 0 — so it can never wipe the
+     * whole table by accident. For retention / GC crons that prune by a
+     * condition rather than one entity at a time.
+     */
+    public function deleteWhere(array $where): int
+    {
+        $wherePart = $this->buildWhere($where);
+        if (trim($wherePart) === '') {
+            return 0;
+        }
+        $sql = "DELETE FROM {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" WHERE $wherePart;";
+        $this->connector->query($sql);
+        return (int) $this->connector->affectedRows();
+    }
+
     // public function metaData()
     // {
     //     $pg = $this->connector->get();

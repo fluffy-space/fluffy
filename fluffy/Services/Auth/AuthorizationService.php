@@ -25,6 +25,9 @@ class AuthorizationService
 {
     const COOKIE_NAME = 'AUTH';
     const MAX_USER_TOKENS = 5;
+    /** Fallback login-session lifetimes (seconds) when not set in config. */
+    const REMEMBER_LIFETIME = 60 * 60 * 24 * 30; // 30 days (remember-me: persistent cookie)
+    const SESSION_LIFETIME = 60 * 60 * 24;       // 1 day  (no remember-me: session cookie)
 
     private ?string $authCookie;
     private ?string $authToken = null;
@@ -182,9 +185,15 @@ class AuthorizationService
             $this->userTokens->delete($this->userToken);
             $this->userToken = null;
         }
+        // Remember-me → a long-lived, persistent cookie; otherwise a shorter
+        // server-side token life and a session cookie (dropped on browser close).
+        $rememberLife = (int)($this->config->values['authRememberLifetime'] ?? self::REMEMBER_LIFETIME);
+        $sessionLife = (int)($this->config->values['authSessionLifetime'] ?? self::SESSION_LIFETIME);
+        $lifetime = $rememberMe ? $rememberLife : $sessionLife;
+
         $token = new UserTokenEntity();
         $token->UserId = $user->Id;
-        $token->Expire = time() + 60 * 60 * 24 * 30;
+        $token->Expire = time() + $lifetime;
         $token->LastVisit = UtilsService::GetMicroTime();
         $token->Token = UtilsService::randomHex(64);
         $token->TokenHash = $this->hashToken($token->Token);
@@ -193,7 +202,10 @@ class AuthorizationService
         if ($setCookie) {
             $integrityHash = hash('crc32', $token->Token . $token->UserId . $this->config->values['hashSalt']);
             $authCookieValue = "{$token->Token}.{$token->UserId}.$integrityHash";
-            $this->httpContext->response->setCookie(self::COOKIE_NAME, $authCookieValue, time() + 60 * 60 * 24 * 30, '/', '', 1, 1);
+            // expire 0 = session cookie (browser drops it on close); a future
+            // timestamp = persistent cookie that survives restarts (remember-me).
+            $cookieExpire = $rememberMe ? time() + $rememberLife : 0;
+            $this->httpContext->response->setCookie(self::COOKIE_NAME, $authCookieValue, $cookieExpire, '/', '', 1, 1);
         }
         return $token;
     }

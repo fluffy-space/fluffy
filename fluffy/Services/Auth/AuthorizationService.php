@@ -58,6 +58,26 @@ class AuthorizationService
         if ($this->authToken !== null) {
             $hash = $this->hashToken($this->authToken);
             $this->userToken = $this->userTokens->find(UserTokenEntityMap::PROPERTY_TokenHash, $hash);
+            // Enforce token expiry: an expired session must grant nothing. Delete it
+            // so the cookie stops working the instant it lapses (self-heals; the GC
+            // cron is only a backstop for tokens of users who never return). Rows
+            // with a NULL Expire mean "no explicit expiry" and stay valid.
+            if (
+                $this->userToken !== null
+                && $this->userToken->Expire !== null
+                && $this->userToken->Expire < time()
+            ) {
+                $this->userTokens->delete($this->userToken);
+                $this->userToken = null;
+                return false;
+            }
+            // TODO: session rotation (sliding expiry) — if $this->userToken is close
+            // to Expire, mint a fresh token (new Token/TokenHash + extended Expire),
+            // delete this one, and re-set the AUTH cookie so active users aren't
+            // logged out mid-use while idle sessions still lapse. Investigate best
+            // practices first (OWASP: periodic id renewal, sliding vs absolute
+            // timeout, reuse detection, concurrent-request races). Needs LastVisit
+            // to actually be updated per request. See backlog #39.
             return $this->userToken !== null;
         }
         return false;
@@ -126,10 +146,29 @@ class AuthorizationService
         if ($user) {
             $result->User = $user;
             if (password_verify($password, $user->Password ?? '')) {
-                $result->Success = true;
+                // Correct password, but a deactivated (admin-disabled) account may
+                // not log in. Unconfirmed users are mid-signup, not deactivated.
+                if ($this->isDeactivated($user)) {
+                    $result->Disabled = true;
+                } else {
+                    $result->Success = true;
+                }
             }
         }
         return $result;
+    }
+
+    /**
+     * A confirmed account that has been switched off (admin-deactivated): may not
+     * log in, and any live session it holds is revoked on the next request.
+     *
+     * Unconfirmed users (EmailConfirmed=false) are exempt — they are mid-signup
+     * (created Active=false, granted a one-time register auto-login until they
+     * confirm), not disabled.
+     */
+    public function isDeactivated(UserEntity $user): bool
+    {
+        return !$user->Active && $user->EmailConfirmed;
     }
 
     public function authorizeUser(UserEntity $user, bool $rememberMe = false, bool $setCookie = true): ?UserTokenEntity
@@ -216,7 +255,13 @@ class AuthorizationService
             $this->authorizeRequest();
         }
         if ($this->userToken !== null) {
-            $this->authorizedUser = $this->users->GetById($this->userToken->UserId);
+            $user = $this->users->GetById($this->userToken->UserId);
+            // Revoke live sessions of a deactivated account: even with a valid,
+            // unexpired token the request is treated as unauthenticated.
+            if ($user !== null && $this->isDeactivated($user)) {
+                return null;
+            }
+            $this->authorizedUser = $user;
         }
         return $this->authorizedUser;
     }

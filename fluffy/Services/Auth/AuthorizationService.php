@@ -205,7 +205,10 @@ class AuthorizationService
             // expire 0 = session cookie (browser drops it on close); a future
             // timestamp = persistent cookie that survives restarts (remember-me).
             $cookieExpire = $rememberMe ? time() + $rememberLife : 0;
-            $this->httpContext->response->setCookie(self::COOKIE_NAME, $authCookieValue, $cookieExpire, '/', '', 1, 1);
+            // SameSite=Lax: not sent on cross-site subrequests/POSTs (CSRF defence),
+            // but still sent on top-level navigation so following a link into the
+            // app (email/confirm/invite links) arrives authenticated.
+            $this->httpContext->response->setCookie(self::COOKIE_NAME, $authCookieValue, $cookieExpire, '/', '', 1, 1, 'Lax');
         }
         return $token;
     }
@@ -249,7 +252,7 @@ class AuthorizationService
     {
         if ($this->authorizeRequest()) {
             $this->userTokens->delete($this->userToken);
-            $this->httpContext->response->setCookie(self::COOKIE_NAME, '', -1, '/', '', 1, 1);
+            $this->httpContext->response->setCookie(self::COOKIE_NAME, '', -1, '/', '', 1, 1, 'Lax');
         }
     }
 

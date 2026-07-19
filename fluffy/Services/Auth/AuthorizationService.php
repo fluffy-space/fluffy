@@ -31,7 +31,6 @@ class AuthorizationService
 
     private ?string $authCookie;
     private ?string $authToken = null;
-    private ?int $userId = null;
     private ?UserEntity $authorizedUser = null;
     private ?UserTokenEntity $userToken = null;
 
@@ -58,7 +57,9 @@ class AuthorizationService
                     [$token, $userId, $checksum] = $parts;
                     $integrityHash = hash('crc32', $token . $userId . $this->config->values['hashSalt']);
                     if ($integrityHash === $checksum) {
-                        $this->userId = $userId;
+                        // $userId from the cookie is only used above to recompute the
+                        // integrity hash; it is deliberately not trusted for identity —
+                        // the user is loaded from the token row (getAuthorizedUser).
                         $this->authToken = $token;
                     }
                 }

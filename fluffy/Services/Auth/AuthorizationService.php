@@ -50,11 +50,17 @@ class AuthorizationService
     {
         if ($this->authCookie ?? ($this->authCookie = $this->httpContext->request->getCookie(self::COOKIE_NAME))) {
             if ($this->authCookie) {
-                [$token, $userId, $checksum] = explode('.', $this->authCookie);
-                $integrityHash = hash('crc32', $token . $userId . $this->config->values['hashSalt']);
-                if ($integrityHash === $checksum) {
-                    $this->userId = $userId;
-                    $this->authToken = $token;
+                // Expect exactly "token.userId.checksum". A malformed cookie
+                // (too few / too many parts) is ignored rather than destructured
+                // (which would emit undefined-array-key warnings).
+                $parts = explode('.', $this->authCookie);
+                if (count($parts) === 3) {
+                    [$token, $userId, $checksum] = $parts;
+                    $integrityHash = hash('crc32', $token . $userId . $this->config->values['hashSalt']);
+                    if ($integrityHash === $checksum) {
+                        $this->userId = $userId;
+                        $this->authToken = $token;
+                    }
                 }
             }
         }

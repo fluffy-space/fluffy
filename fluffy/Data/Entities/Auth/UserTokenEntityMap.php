@@ -28,7 +28,9 @@ class UserTokenEntityMap extends BaseEntityMap
             'Id' => CommonMap::$Id,
 
             'UserId' => CommonMap::$BigInt,
-            'Token' => CommonMap::$VarChar255,
+            // 'Token' (raw) is intentionally NOT a column: the plaintext token is a
+            // bearer credential and is never persisted — only TokenHash is stored
+            // and looked up. Dropped by UserTokenDropTokenMigration.
             'TokenHash' => CommonMap::$VarChar255,
             'Expire' => CommonMap::$IntNull,
             'LastVisit' => CommonMap::$BigIntNull,

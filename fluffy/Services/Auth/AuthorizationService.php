@@ -359,7 +359,13 @@ class AuthorizationService
         if ($this->httpContext === null) {
             return;
         }
-        $this->httpContext->response->setCookie(self::IMPERSONATE_COOKIE, '', -1, '/', '', 1, 1, 'Lax');
+        // Overwrite + expire the IMP cookie WITH path=/ so the browser actually
+        // removes it. A non-empty value + explicit past expiry is required: Swoole's
+        // empty-value / expire=-1 "deleted" form omits path=/, so the cookie (set at
+        // '/') would linger and impersonation would never end — IMP has no server-side
+        // state to fall back on. The tombstone value casts to 0, so even a client that
+        // ignored Max-Age=0 resolves the overlay to "not impersonating".
+        $this->httpContext->response->setCookie(self::IMPERSONATE_COOKIE, '.', time() - 3600, '/', '', 1, 1, 'Lax');
     }
 
     /** True when the current request runs under an impersonation overlay. */

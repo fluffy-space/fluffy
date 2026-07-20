@@ -36,7 +36,10 @@ class SessionService
     public function startSession(?int $userId = null): SessionEntity
     {
         $session = $this->getSession() ?? $this->createSession($userId);
-        $this->httpContext->response->setCookie(self::COOKIE_NAME, $session->HashId, time() + 60 * 60 * 24 * 30, '/', '', 1, 1);
+        // secure + httpOnly + SameSite=Lax, matching the AUTH cookie: not sent on
+        // cross-site subrequests/POSTs (CSRF defence) but present on top-level
+        // navigation. The CSRF/login flow is same-site, so Lax is safe here.
+        $this->httpContext->response->setCookie(self::COOKIE_NAME, $session->HashId, time() + 60 * 60 * 24 * 30, '/', '', 1, 1, 'Lax');
         return $session;
     }
 }

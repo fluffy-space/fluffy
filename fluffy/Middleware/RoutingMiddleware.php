@@ -55,7 +55,7 @@ class RoutingMiddleware implements IMiddleware
         if ($match === null) {
             // print_r($this->httpContext->request);
             // print_r(self::$router);
-            throw new Exception('No route was matched!');
+            throw new Exception('No route was matched! ' . $targetMethod . ':' . $this->httpContext->request->uri);
         }
         $params = $this->httpContext->request->query;
         /** @var RouteItem */

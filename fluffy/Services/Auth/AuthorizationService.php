@@ -369,14 +369,38 @@ class AuthorizationService
         }
     }
 
-    function changePassword(int $userId, string $password)
+    function changePassword(int $userId, string $password, bool $keepCurrentSession = false)
     {
         /** @var UserEntity|null $user */
         $user = $this->users->getById($userId);
         if ($user !== null) {
             $user->Password = $this->hashPassword($password);
             $this->users->update($user, [UserEntityMap::PROPERTY_Password]);
+            // A password change invalidates existing sessions. Keep the caller's
+            // current session when they changed their own password in-session
+            // (keepCurrentSession); otherwise — reset flow, admin reset — revoke
+            // every session so a stolen/old cookie can't outlive the change.
+            $keep = null;
+            if ($keepCurrentSession && $this->userToken !== null && $this->userToken->UserId === $userId) {
+                $keep = $this->userToken->TokenHash;
+            }
+            $this->revokeSessions($userId, $keep);
         }
+    }
+
+    /**
+     * Delete a user's login sessions (UserToken rows) — all of them, or all but
+     * one (exceptTokenHash, e.g. the caller's current session). Returns the
+     * number revoked. Used after a password change/reset; also usable for an
+     * admin "log out everywhere".
+     */
+    public function revokeSessions(int $userId, ?string $exceptTokenHash = null): int
+    {
+        $where = [[UserTokenEntityMap::PROPERTY_UserId, $userId]];
+        if ($exceptTokenHash !== null) {
+            $where[] = [UserTokenEntityMap::PROPERTY_TokenHash, '!=', $exceptTokenHash];
+        }
+        return $this->userTokens->deleteWhere($where);
     }
 
     function hashToken(string $token): string

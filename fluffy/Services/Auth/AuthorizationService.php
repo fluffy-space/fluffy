@@ -18,6 +18,7 @@ use Fluffy\Models\Auth\AuthResult;
 use Fluffy\Models\Auth\RegisterResult;
 use Fluffy\Security\Capability;
 use Fluffy\Security\Permissions;
+use Fluffy\Security\Role;
 use Fluffy\Services\Session\SessionService;
 use Fluffy\Services\UtilsService;
 
@@ -29,10 +30,22 @@ class AuthorizationService
     const REMEMBER_LIFETIME = 60 * 60 * 24 * 30; // 30 days (remember-me: persistent cookie)
     const SESSION_LIFETIME = 60 * 60 * 24;       // 1 day  (no remember-me: session cookie)
 
+    /**
+     * Impersonation ("view as user") overlay cookie. Separate from AUTH: the
+     * admin's own session is untouched; this signed cookie tells the auth flow to
+     * resolve a DIFFERENT effective user. No DB involved. Verified every request.
+     */
+    const IMPERSONATE_COOKIE = 'IMP';
+    const IMPERSONATION_LIFETIME = 60 * 30; // 30 min fallback
+
     private ?string $authCookie;
     private ?string $authToken = null;
     private ?UserEntity $authorizedUser = null;
     private ?UserTokenEntity $userToken = null;
+    /** The real principal (the admin) when impersonating; else same as authorizedUser. */
+    private ?UserEntity $realUser = null;
+    /** Set to the acting admin's id while an impersonation cookie is in effect. */
+    private ?int $impersonatorId = null;
 
     public function __construct(
         protected SessionService $session,
@@ -260,6 +273,8 @@ class AuthorizationService
         if ($this->authorizeRequest()) {
             $this->userTokens->delete($this->userToken);
             $this->httpContext->response->setCookie(self::COOKIE_NAME, '', -1, '/', '', 1, 1, 'Lax');
+            // Also drop any impersonation overlay so a full logout leaves nothing behind.
+            $this->stopImpersonation();
         }
     }
 
@@ -276,16 +291,96 @@ class AuthorizationService
         if ($this->userToken === null) {
             $this->authorizeRequest();
         }
-        if ($this->userToken !== null) {
-            $user = $this->users->GetById($this->userToken->UserId);
-            // Revoke live sessions of a deactivated account: even with a valid,
-            // unexpired token the request is treated as unauthenticated.
-            if ($user !== null && $this->isDeactivated($user)) {
-                return null;
-            }
-            $this->authorizedUser = $user;
+        if ($this->userToken === null) {
+            return null;
+        }
+        $realUser = $this->users->getById($this->userToken->UserId);
+        // Revoke live sessions of a deactivated account: even with a valid,
+        // unexpired token the request is treated as unauthenticated.
+        if ($realUser === null || $this->isDeactivated($realUser)) {
+            return null;
+        }
+        $this->realUser = $realUser;
+        // Single point of entry for impersonation: when a valid IMP cookie is in
+        // effect the effective (authorized) user becomes the target, so everything
+        // downstream (permissions, guards, Me) sees the impersonated user.
+        $target = $this->resolveImpersonation($realUser);
+        if ($target !== null) {
+            $this->impersonatorId = $realUser->Id;
+            $this->authorizedUser = $target;
+        } else {
+            $this->authorizedUser = $realUser;
         }
         return $this->authorizedUser;
+    }
+
+    /**
+     * Resolve the impersonation overlay for this request, or null.
+     *
+     * The IMP cookie is simply the target user id. It only takes effect when the
+     * AUTH user is a SuperAdmin — who can already act on any account, so
+     * impersonation grants no new privilege and needs no signature or per-target
+     * guard. A non-SuperAdmin's IMP cookie is ignored, so it can never escalate.
+     * A deactivated TARGET is allowed (support can view a locked-out user).
+     */
+    private function resolveImpersonation(UserEntity $realUser): ?UserEntity
+    {
+        if ($this->httpContext === null) {
+            return null;
+        }
+        $targetId = (int) $this->httpContext->request->getCookie(self::IMPERSONATE_COOKIE);
+        if ($targetId <= 0 || $targetId === $realUser->Id) {
+            return null;
+        }
+        if (!Permissions::hasRole($realUser->Permissions, Role::SuperAdmin)) {
+            return null;
+        }
+        return $this->users->getById($targetId);
+    }
+
+    /**
+     * Begin impersonating $targetId: set the IMP overlay cookie (just the target
+     * id). No DB write — the admin's own AUTH session is untouched. It only
+     * resolves for a SuperAdmin session (see resolveImpersonation); the caller
+     * gates Start on SuperAdmin.
+     */
+    public function startImpersonation(int $targetId): void
+    {
+        if ($this->httpContext === null) {
+            return;
+        }
+        $ttl = (int)($this->config->values['impersonationLifetime'] ?? self::IMPERSONATION_LIFETIME);
+        $this->httpContext->response->setCookie(self::IMPERSONATE_COOKIE, (string)$targetId, time() + $ttl, '/', '', 1, 1, 'Lax');
+    }
+
+    /** End impersonation: clear the IMP cookie. The admin's AUTH session remains. */
+    public function stopImpersonation(): void
+    {
+        if ($this->httpContext === null) {
+            return;
+        }
+        $this->httpContext->response->setCookie(self::IMPERSONATE_COOKIE, '', -1, '/', '', 1, 1, 'Lax');
+    }
+
+    /** True when the current request runs under an impersonation overlay. */
+    public function isImpersonating(): bool
+    {
+        $this->getAuthorizedUser();
+        return $this->impersonatorId !== null;
+    }
+
+    /** The acting admin's id while impersonating, else null. */
+    public function getImpersonatorId(): ?int
+    {
+        $this->getAuthorizedUser();
+        return $this->impersonatorId;
+    }
+
+    /** The real principal (the admin); same as getAuthorizedUser() when not impersonating. */
+    public function getRealUser(): ?UserEntity
+    {
+        $this->getAuthorizedUser();
+        return $this->realUser;
     }
 
     function registerUser(UserEntity $user): RegisterResult

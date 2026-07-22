@@ -23,4 +23,10 @@ class RedisRateLimitService implements IRateLimitService
         }
         return true;
     }
+
+    public function peek(string $key): int
+    {
+        $value = $this->redisConnector->get()->get("RL:$key");
+        return ($value === false || $value === null) ? 0 : (int) $value;
+    }
 }

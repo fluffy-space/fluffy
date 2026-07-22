@@ -99,7 +99,7 @@ class BaseStartUp implements IStartUp
         $serviceProvider->addSingleton(CronMonitorService::class);
         $serviceProvider->addSingleton(CacheManager::class);
         // rate limiter
-        $serviceProvider->addSingleton(IRateLimitService::class, RedisRateLimitService::class);
+        $serviceProvider->addScoped(IRateLimitService::class, RedisRateLimitService::class);
         // OR, chose one
         // $serviceProvider->addSingleton(IRateLimitService::class, SwooleTableRateLimitService::class);
         $serviceProvider->addSingleton(HubServer::class);

@@ -8,8 +8,15 @@
  * directory's name — configs/server.php maps it to a port. So the unit is just the template
  * plus a WorkingDirectory, and blue/green need no per-instance config of their own.
  *
- * Units are written, reloaded and enabled, but NOT started: a release dir that hasn't been
- * built yet would crash-loop under Restart=always. Start it yourself once it's ready.
+ * Units are written and reloaded, but NOT enabled and NOT started. Two reasons:
+ *  - a release dir that hasn't been built yet would crash-loop under Restart=always;
+ *  - enabling every color means every color comes back on reboot, so a colour you retired
+ *    returns holding a port and a full set of workers, and anything the app runs on a timer
+ *    runs in both. (An app can gate its own scheduled work on which instance is live; this
+ *    generator can't assume it does.)
+ * Exactly one color should be `enable --now` at a time — the one nginx points at. A rotation
+ * enables the incoming color and `disable --now`s the outgoing one (plain `stop` leaves it
+ * enabled, which is the reboot trap above).
  */
 class ServiceBuilder
 {
@@ -87,18 +94,33 @@ class ServiceBuilder
             return;
         }
 
+        // Neither enabled nor started — see the class docblock. Report what IS enabled, since
+        // two enabled colors is the failure this avoids and it's invisible until a reboot.
+        $enabled = [];
         foreach ($written as $service) {
-            echo "[ServiceBuilder] Enabling $service." . PHP_EOL;
-            System("sudo systemctl enable $service 2>&1", $enableCode);
-            if ($enableCode !== 0) {
-                echo "[ServiceBuilder] Could not enable $service." . PHP_EOL;
+            $out = [];
+            exec('systemctl is-enabled ' . escapeshellarg($service) . ' 2>/dev/null', $out);
+            if (trim($out[0] ?? '') === 'enabled') {
+                $enabled[] = $service;
             }
         }
 
-        // Deliberately not started — see the class docblock.
-        echo PHP_EOL . "[ServiceBuilder] Done. Start when the release is built:" . PHP_EOL;
+        echo PHP_EOL . "[ServiceBuilder] Done. Units written; none enabled or started." . PHP_EOL;
+        echo "Enable + start ONLY the color that should take traffic:" . PHP_EOL;
         foreach ($written as $service) {
-            echo "  sudo systemctl start $service   # then: systemctl status $service" . PHP_EOL;
+            echo "  sudo systemctl enable --now $service   # then: systemctl status $service" . PHP_EOL;
+        }
+        echo "and retire the other with `disable --now` — stop alone leaves it enabled, so a" . PHP_EOL;
+        echo "reboot brings it back beside the live one." . PHP_EOL;
+
+        if (count($enabled) > 1) {
+            echo PHP_EOL . "[ServiceBuilder] WARNING: " . count($enabled) . " instances are enabled: "
+                . implode(', ', $enabled) . PHP_EOL;
+            echo "  On reboot they all start — each holding a port and a full set of workers, and" . PHP_EOL;
+            echo "  each running whatever the app schedules. Disable all but the live one:" . PHP_EOL;
+            foreach ($enabled as $service) {
+                echo "    sudo systemctl disable --now $service" . PHP_EOL;
+            }
         }
     }
 }

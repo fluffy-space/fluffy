@@ -13,6 +13,13 @@ _DOCUMENTATION_
 # would recover anyway, but this avoids a crash-loop on every reboot.
 Wants=network-online.target
 After=network-online.target
+# Give up after 5 failed starts in a minute instead of respawning forever. An un-deployed or
+# half-deployed release dir would otherwise crash-loop every RestartSec=2 and bury journald.
+# Explicit because the defaults (burst 5 / 10s) land exactly on RestartSec=2 — right on the
+# boundary, so whether the loop is caught at all comes down to timing. `systemctl reset-failed
+# <unit>` clears the state once the release is fixed.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=exec

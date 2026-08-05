@@ -24,11 +24,12 @@ class BaseClickHouseRepository
      * @param BaseClickHouseEntity|string $entityType
      * @param BaseClickHouseEntityMap|string $entityMap
      */
+    /** Protected for the same reason as BasePostgresqlRepository: subclasses write their own SQL. */
     public function __construct(
-        private IMapper $mapper,
-        private IClickHouseConnector $connector,
-        private string $entityType,
-        private string $entityMap
+        protected IMapper $mapper,
+        protected IClickHouseConnector $connector,
+        protected string $entityType,
+        protected string $entityMap
     ) {}
 
     static function getTime(): int

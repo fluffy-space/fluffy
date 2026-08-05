@@ -22,7 +22,14 @@ class BasePostgresqlRepository
      * @param BaseEntityMap|string $entityMap 
      * @return void 
      */
-    public function __construct(private IMapper $mapper, private IConnector $connector, private string $entityType, private string $entityMap) {}
+    /**
+     * PROTECTED, not private: a repository subclass writing its own SQL is the intended
+     * extension point, and every such method needs the map (schema/table names) and the
+     * connector. Private made those reads resolve to an undefined property on the CHILD —
+     * a warning, then `null::$Schema`, i.e. "Class name must be a valid object or a string"
+     * at runtime rather than anything the caller could read as a missing dependency.
+     */
+    public function __construct(protected IMapper $mapper, protected IConnector $connector, protected string $entityType, protected string $entityMap) {}
 
     static function getTime(): int
     {

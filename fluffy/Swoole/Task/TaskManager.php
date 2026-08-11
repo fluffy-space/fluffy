@@ -25,10 +25,27 @@ class TaskManager
      */
     private array $lates = [];
     /**
-     * 
+     *
      * @var int[]
      */
     private array $lastRuns = [];
+    /**
+     * Seconds between runs, per schedule string — memoised by scheduleIntervalSeconds().
+     * @var int[]
+     */
+    private array $intervals = [];
+
+    /**
+     * A run is only worth a start/finish pair in the log if the job runs less often than this.
+     *
+     * Everything below it (the 10s click drain, the 30s abuse scan, the 5-minute sweeps) produced
+     * two lines per tick per colour — several a second on a blue/green box — which is a journal
+     * nobody can read and the reason a real failure went unnoticed in it. Those jobs still log when
+     * they FAIL, when they overrun their schedule, and whatever their own body chooses to report;
+     * they just no longer narrate every successful tick. Live per-job status is in /admin/cron,
+     * which is fed from the status table and is unaffected by any of this.
+     */
+    private const LOG_RUNS_INTERVAL_SEC = 3600;
 
     public function __construct(private \AppServer $appServer)
     {
@@ -143,10 +160,34 @@ class TaskManager
                 $this->sendToWorker($taskMessage);
             });
         } else {
+            // The previous run has not finished, so this tick is dropped. Logged only on the
+            // TRANSITION into that state: a 10-second job that overruns would otherwise print this
+            // every 10 seconds, and one line per episode is what says "it is taking too long".
+            if (empty($this->lates[$jobKey])) {
+                echo '[Crontab] ' . date('Y-m-d H:i:s') . ' ' . $crontabItem->id()
+                    . ' is still running from the previous tick — this run was skipped ('
+                    . $crontabItem->schedule . ').' . PHP_EOL;
+            }
             $this->lates[$jobKey] = time();
         }
         // echo '[TaskManager] runCronJob next.' . PHP_EOL;
         $this->scheduleCronJob($crontabItem);
+    }
+
+    /**
+     * How many seconds a schedule leaves between runs — the gap between the next two firings.
+     *
+     * Used to decide whether a run is worth a log line at all. Memoised per schedule string:
+     * getNextRun() walks the fields, and this would otherwise be recomputed on every tick of every
+     * job, including the ones that fire every ten seconds.
+     */
+    private function scheduleIntervalSeconds(string $schedule): int
+    {
+        if (!isset($this->intervals[$schedule])) {
+            $first = CronTab::getNextRun($schedule);
+            $this->intervals[$schedule] = max(1, CronTab::getNextRun($schedule, $first) - $first);
+        }
+        return $this->intervals[$schedule];
     }
 
     public function processMessage(TaskMessage $message)
@@ -158,7 +199,11 @@ class TaskManager
             $statusKey = $message->data->id();
             $timestamp = time();
             $time = date('Y-m-d H:i:s', $timestamp);
-            echo "[Crontab] +$time $jobKey starting on worker {$this->workerId} [{$this->uniqueId}]" . PHP_EOL;
+            // Frequent jobs are silent while they are working — see LOG_RUNS_INTERVAL_SEC.
+            $verbose = $this->scheduleIntervalSeconds($message->data->schedule) >= self::LOG_RUNS_INTERVAL_SEC;
+            if ($verbose) {
+                echo "[Crontab] +$time $jobKey starting on worker {$this->workerId} [{$this->uniqueId}]" . PHP_EOL;
+            }
             $startMs = (int)(microtime(true) * 1000);
             $result = $this->appServer->app->runTask($class, $method, [...$message->data->params, $message->data->currentRunTimerInfo]);
             $durationMs = (int)(microtime(true) * 1000) - $startMs;
@@ -184,7 +229,16 @@ class TaskManager
                 $this->appServer->cronStatusTable->incr($statusKey, 'failCount');
             }
             $time = date('Y-m-d H:i:s', time());
-            echo "[Crontab] -$time $jobKey finished on worker {$this->workerId} [{$this->uniqueId}]." . PHP_EOL;
+            if (!$result['ok']) {
+                // ALWAYS, however often the job runs. runTask() has already printed the exception
+                // and its trace, but not which job it belonged to — and a trace from a task worker
+                // is otherwise unattributable. This is the line to grep for: "[Crontab] FAILED".
+                echo "[Crontab] FAILED $time $statusKey after {$durationMs}ms on worker "
+                    . "{$this->workerId} [{$this->uniqueId}]: " . (string)$result['error'] . PHP_EOL;
+            } elseif ($verbose) {
+                echo "[Crontab] -$time $jobKey finished on worker {$this->workerId} [{$this->uniqueId}]"
+                    . " in {$durationMs}ms." . PHP_EOL;
+            }
             $this->appServer->iteration->sub();
             $this->sendToWorker(new TaskMessage($this->uniqueId, [TaskManager::class, 'onCronJobFinish', [$message->data]]), $message->workerId);
         } elseif ($message->data instanceof TimerTask) {

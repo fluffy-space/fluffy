@@ -125,17 +125,19 @@ class BaseStartUp implements IStartUp
             $serviceProvider->setSingleton(IPostgresqlPool::class, $pgPool);
             $serviceProvider->addScoped(IConnector::class, PostgreSqlPDOConnector::class);
         }
-        $redisConfig = $this->config->values['redis'];
-        $redisPool = new RedisPool((new RedisConfig)
-                ->withHost($redisConfig['host'])
-                ->withPort($redisConfig['port'])
-                ->withAuth($redisConfig['auth'])
-                ->withDbIndex($redisConfig['dbIndex'])
-                ->withTimeout($redisConfig['timeout'])
-        );
-        $serviceProvider->setSingleton(RedisPool::class, $redisPool);
-        $serviceProvider->addScoped(RedisCache::class);
-        $serviceProvider->addScoped(RedisConnector::class);
+        if (isset($this->config->values['redis'])) {
+            $redisConfig = $this->config->values['redis'];
+            $redisPool = new RedisPool((new RedisConfig)
+                    ->withHost($redisConfig['host'])
+                    ->withPort($redisConfig['port'])
+                    ->withAuth($redisConfig['auth'])
+                    ->withDbIndex($redisConfig['dbIndex'])
+                    ->withTimeout($redisConfig['timeout'])
+            );
+            $serviceProvider->setSingleton(RedisPool::class, $redisPool);
+            $serviceProvider->addScoped(RedisCache::class);
+            $serviceProvider->addScoped(RedisConnector::class);
+        }
         // ClickHouse (optional) — registered only when configured. Pool = singleton (holds the
         // keep-alive HTTP clients), connector + context = scoped (per-request, auto-disposed).
         if (isset($this->config->values['clickhouse'])) {

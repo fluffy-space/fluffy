@@ -158,6 +158,20 @@ class NginxBuilder
             }
         }
 
+        // Security headers go in ONE file every site includes, written here rather than by the
+        // installer: a site config is regenerated far more often than a box is installed, and an
+        // `include` whose target is missing is a HARD nginx -t failure — which would take the whole
+        // edge down on reload, not just this domain. Writing it first makes the pair self-contained.
+        // Overwritten every run: unlike the upstream file (which holds the active-colour decision),
+        // this is policy, and the repo is its source.
+        $securityHeadersPath = '/etc/nginx/snippets/fluffy-security-headers.conf';
+        if (!is_dir(dirname($securityHeadersPath))) {
+            mkdir(dirname($securityHeadersPath), 0755, true);
+        }
+        echo "[NginxBuilder] writing security headers into $securityHeadersPath" . PHP_EOL;
+        file_put_contents($securityHeadersPath, file_get_contents(__DIR__ . '/setup/nginx-security-headers.conf'));
+
+        $template = str_replace('_SECURITY_HEADERS_', $securityHeadersPath, $template);
         $template = str_replace('_UPSTREAM_', $upstream, $template);
         $template = str_replace('_ROOT_', $rootPath, $template);
         $template = str_replace('_DOMAIN_', $domain, $template);

@@ -30,6 +30,20 @@ class RoutingMiddleware implements IMiddleware
         self::$mapper = $mapper;
     }
 
+    /**
+     * One request-supplied value, made safe to put in a log line.
+     *
+     * Every part of a 404 log line comes from the caller — the URI, the referrer, the user-agent
+     * and even the forwarded IP. Control characters are stripped because a `\n` in a user-agent
+     * would otherwise let a prober write its own entries into the journal, and the value is
+     * bounded so a multi-kilobyte header cannot flood the log.
+     */
+    private function logSafe(string $value, int $max = 200): string
+    {
+        $value = (string) preg_replace('/[[:cntrl:]]/', ' ', $value);
+        return strlen($value) > $max ? substr($value, 0, $max) . '...' : $value;
+    }
+
     public function invoke()
     {
         $isHead = $this->httpContext->request->method === 'HEAD';
@@ -53,9 +67,29 @@ class RoutingMiddleware implements IMiddleware
         $targetMethod = $isHead ? 'GET' : $this->httpContext->request->method;
         $match = self::$router->resolve($this->httpContext->request->uri, $targetMethod);
         if ($match === null) {
-            // print_r($this->httpContext->request);
-            // print_r(self::$router);
-            throw new Exception('No route was matched!');
+            // NOT an exception. On a public host unmatched routes are ordinary traffic: scanners
+            // POST to `/` and probe for admin panels and exploit paths continuously, and a
+            // mistyped URL is a user's everyday mistake. Throwing gave every one of them a stack
+            // trace in the journal and answered 500 — the wrong status, and enough noise to bury
+            // the errors that do matter.
+            //
+            // One console line instead, which systemd captures like any other app output. The
+            // body is deliberately plain text: this runs before component routing, so there is no
+            // page to render, and a probe should learn as little as possible from the response.
+            $request = $this->httpContext->request;
+            $referer = $request->headers['referer'] ?? '';
+            $agent = $request->headers['user-agent'] ?? '';
+            echo '[Router] 404 ' . $targetMethod . ':' . $this->logSafe($request->uri)
+                . ' ip=' . $this->logSafe($request->getIp(), 45)
+                . ($referer !== '' ? ' ref=' . $this->logSafe($referer) : '')
+                . ($agent !== '' ? ' ua=' . $this->logSafe($agent) : '')
+                . PHP_EOL;
+            $this->httpContext->response->status = 404;
+            if (!$isHead) {
+                $this->httpContext->response->headers['Content-Type'] = 'text/plain; charset=utf-8';
+                $this->httpContext->response->body = 'Not Found';
+            }
+            return;
         }
         $params = $this->httpContext->request->query;
         /** @var RouteItem */

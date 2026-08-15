@@ -36,6 +36,20 @@ class ClickHouseCommonMap
     public static array $DateTime   = ['type' => "DateTime('UTC')", 'null' => false];
     public static array $Date       = ['type' => 'Date', 'null' => false];
 
+    /**
+     * The same column type with a compression codec attached, e.g.
+     *   ClickHouseCommonMap::withCodec(ClickHouseCommonMap::$MicroDateTime, 'DoubleDelta, ZSTD(1)')
+     *
+     * Kept as a wrapper rather than baked into the type constants: the right codec depends on the
+     * data's shape (DoubleDelta for near-monotonic timestamps, T64 for small-range integers,
+     * ZSTD for text), and guessing on a shared constant would apply it to tables it doesn't suit.
+     */
+    public static function withCodec(array $meta, string $codec): array
+    {
+        $meta['codec'] = $codec;
+        return $meta;
+    }
+
     public static function LowCard(string $inner = 'String'): array
     {
         return ['type' => "LowCardinality($inner)", 'null' => false];

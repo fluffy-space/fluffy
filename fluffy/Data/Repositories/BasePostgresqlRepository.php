@@ -22,7 +22,14 @@ class BasePostgresqlRepository
      * @param BaseEntityMap|string $entityMap 
      * @return void 
      */
-    public function __construct(private IMapper $mapper, private IConnector $connector, private string $entityType, private string $entityMap) {}
+    /**
+     * PROTECTED, not private: a repository subclass writing its own SQL is the intended
+     * extension point, and every such method needs the map (schema/table names) and the
+     * connector. Private made those reads resolve to an undefined property on the CHILD —
+     * a warning, then `null::$Schema`, i.e. "Class name must be a valid object or a string"
+     * at runtime rather than anything the caller could read as a missing dependency.
+     */
+    public function __construct(protected IMapper $mapper, protected IConnector $connector, protected string $entityType, protected string $entityMap) {}
 
     static function getTime(): int
     {
@@ -426,6 +433,26 @@ class BasePostgresqlRepository
             return true;
         }
         return false;
+    }
+
+    /**
+     * Bulk-delete every row matching $where (same shape as search()'s $where,
+     * e.g. [[Map::PROPERTY_Expire, '<', $cutoff]]) in a single statement, and
+     * return the number of rows removed.
+     *
+     * Refuses an empty / blank WHERE and returns 0 — so it can never wipe the
+     * whole table by accident. For retention / GC crons that prune by a
+     * condition rather than one entity at a time.
+     */
+    public function deleteWhere(array $where): int
+    {
+        $wherePart = $this->buildWhere($where);
+        if (trim($wherePart) === '') {
+            return 0;
+        }
+        $sql = "DELETE FROM {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" WHERE $wherePart;";
+        $this->connector->query($sql);
+        return (int) $this->connector->affectedRows();
     }
 
     // public function metaData()

@@ -7,7 +7,9 @@ use Fluffy\Data\Entities\CommonMap;
 
 class UserTokenEntityMap extends BaseEntityMap
 {
+    public const PROPERTY_UserId = 'UserId';
     public const PROPERTY_TokenHash = 'TokenHash';
+    public const PROPERTY_Expire = 'Expire';
 
     public static string $Table = 'UserToken';
     public static array $Indexes = [
@@ -26,7 +28,9 @@ class UserTokenEntityMap extends BaseEntityMap
             'Id' => CommonMap::$Id,
 
             'UserId' => CommonMap::$BigInt,
-            'Token' => CommonMap::$VarChar255,
+            // 'Token' (raw) is intentionally NOT a column: the plaintext token is a
+            // bearer credential and is never persisted — only TokenHash is stored
+            // and looked up. Dropped by UserTokenDropTokenMigration.
             'TokenHash' => CommonMap::$VarChar255,
             'Expire' => CommonMap::$IntNull,
             'LastVisit' => CommonMap::$BigIntNull,

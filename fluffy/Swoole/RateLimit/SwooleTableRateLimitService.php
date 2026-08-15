@@ -26,4 +26,10 @@ class SwooleTableRateLimitService implements IRateLimitService
         }
         return true;
     }
+
+    public function peek(string $key): int
+    {
+        $value = $this->appServer->timeTable->get($key, 'value');
+        return $value === false ? 0 : (int) $value;
+    }
 }

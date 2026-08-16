@@ -10,4 +10,5 @@ use Swoole\Database\PDOPool;
 
 class PostgresPDOPool extends PDOPool implements IPostgresqlPool
 {
+    use ReleasesPoolSlots;
 }

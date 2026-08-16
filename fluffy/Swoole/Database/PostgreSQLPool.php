@@ -9,6 +9,8 @@ use Swoole\Coroutine\PostgreSQL;
 
 class PostgreSQLPool extends PostgreSqlConnectionPool implements IPostgresqlPool
 {
+    use ReleasesPoolSlots;
+
     public function __construct(private Config $config, int $size = self::DEFAULT_SIZE)
     {
         

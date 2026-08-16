@@ -114,13 +114,19 @@ class BaseStartUp implements IStartUp
             $serviceProvider->addScoped(IConnector::class, PostgreSqlClientConnector::class);
         } else {
             $pgConfig = $this->config->values['postgresql'];
+            // Connections PER WORKER PROCESS, and there is a pool in every request worker AND every
+            // task worker - so the app's real ceiling is poolSize x (worker_num + task_worker_num),
+            // which has to stay under PostgreSQL's max_connections (100 by default) with room for a
+            // blue/green overlap running two full sets of workers. Swoole's own default of 64 is
+            // nowhere near that, so never leave this to the library.
             $pgPool = new PostgresPDOPool((new PDOConfig)
                     ->withDriver('pgsql')
                     ->withHost($pgConfig['host'])
                     ->withPort($pgConfig['port'])
                     ->withDbName($pgConfig['dbname'])
                     ->withUsername($pgConfig['user'])
-                    ->withPassword($pgConfig['password'])
+                    ->withPassword($pgConfig['password']),
+                $pgConfig['poolSize'] ?? 8
             );
             $serviceProvider->setSingleton(IPostgresqlPool::class, $pgPool);
             $serviceProvider->addScoped(IConnector::class, PostgreSqlPDOConnector::class);

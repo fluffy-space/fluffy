@@ -10,7 +10,6 @@ use PDOException;
 use PDOStatement;
 use RuntimeException;
 use Swoole\Database\DetectsLostConnections;
-use Throwable;
 
 class PostgreSqlPDOConnector implements IConnector, IDisposable
 {
@@ -97,7 +96,7 @@ class PostgreSqlPDOConnector implements IConnector, IDisposable
 
     private function canRetry(PDOException $exception, string $query): bool
     {
-        if (!DetectsLostConnections::causedByLostConnection($exception)) {
+        if (!$this->isLostConnection($exception->errorInfo[0] ?? null, $exception->getMessage())) {
             return false;
         }
         // Nothing has run on this connection yet: it went stale while it sat in the pool, so the
@@ -108,6 +107,31 @@ class PostgreSqlPDOConnector implements IConnector, IDisposable
     }
 
     /**
+     * True when an error means the CONNECTION is gone, as opposed to the statement being
+     * rejected on a perfectly healthy one. A unique violation or an unknown column leaves the
+     * connection usable, so those must not count here: treating them as death recycles the
+     * connection for nothing, and the replacement is opened eagerly (see replaceInPool).
+     *
+     * Getting this wrong in the safe direction is cheap - a genuinely dead connection that
+     * slips back into the pool throws on its next use, which is what the retry in query()
+     * is there for. Getting it wrong in the other direction churns the pool under ordinary
+     * application errors.
+     */
+    private function isLostConnection(?string $sqlState, string $message): bool
+    {
+        // Class 08 is "connection exception"; 57P01/02/03 are what PostgreSQL sends while it is
+        // terminating a backend or is not accepting connections yet (restart, crash of a sibling
+        // process, recovery). Swoole's text matcher recognises NONE of the 57P0x wordings.
+        if ($sqlState !== null && (str_starts_with($sqlState, '08') || $sqlState === '57P01' || $sqlState === '57P02' || $sqlState === '57P03')) {
+            return true;
+        }
+        // pdo_pgsql reports a socket that died between statements as a generic HY000, so the
+        // SQLSTATE alone can't decide it - fall back to matching the driver's text. The matcher
+        // only takes a Throwable, hence the throwaway exception.
+        return DetectsLostConnections::causedByLostConnection(new PDOException($message));
+    }
+
+    /**
      * Drop the current connection without handing it back to the pool.
      */
     private function discard(): void
@@ -115,21 +139,7 @@ class PostgreSqlPDOConnector implements IConnector, IDisposable
         if (isset($this->pg)) {
             unset($this->pg);
             $this->used = false;
-            $this->replaceInPool();
-        }
-    }
-
-    /**
-     * Tell the pool its connection is gone; it opens a replacement straight away.
-     */
-    private function replaceInPool(): void
-    {
-        try {
-            $this->connectionPool->put(null);
-        } catch (Throwable $throwable) {
-            // PostgreSQL is still unreachable. The pool slot is free either way, so the next get()
-            // makes the connection attempt instead - don't let this escape into request disposal.
-            echo '[Server] PostgreSQL connection could not be replaced: ' . $throwable->getMessage() . PHP_EOL;
+            $this->connectionPool->release();
         }
     }
 
@@ -158,18 +168,22 @@ class PostgreSqlPDOConnector implements IConnector, IDisposable
     {
         if (isset($this->pg)) {
             // $startedAt = microtime(true);
-            $broken = $this->pg->errorInfo()[1] !== null;
-            // echo "PUT connection $broken" . $this->pg->errorCode() .  PHP_EOL;
-            // Possible to improve, see https://www.postgresql.org/docs/current/errcodes-appendix.html
-            // var_dump($this->pg->errorInfo());
-            // if ($broken) {
-            //     var_dump($this->pg->errorInfo());
-            // }
+            // errorInfo() carries the LAST operation on this handle, which is a plain SQL error far
+            // more often than it is a dead socket - see isLostConnection for why the difference
+            // matters. https://www.postgresql.org/docs/current/errcodes-appendix.html
+            $errorInfo = $this->pg->errorInfo();
+            $broken = $errorInfo[1] !== null
+                && $this->isLostConnection($errorInfo[0] ?? null, (string) ($errorInfo[2] ?? ''));
             $pg = $this->pg;
             unset($this->pg);
             $this->used = false;
             if ($broken) {
-                $this->replaceInPool();
+                // Close the dead connection BEFORE freeing its slot, so the process never holds
+                // two of PostgreSQL's connection slots for one pool entry. The pool opens the
+                // replacement lazily on the next get(), which is also what keeps a server-side
+                // blip from turning into every worker reconnecting in the same instant.
+                unset($pg);
+                $this->connectionPool->release();
             } else {
                 $this->connectionPool->put($pg);
             }

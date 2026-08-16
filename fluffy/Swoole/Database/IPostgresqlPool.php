@@ -13,9 +13,14 @@ interface IPostgresqlPool
      */
     function get();
     /**
-     * 
-     * @param mixed PostgreSQL|PDO 
-     * @return mixed 
+     *
+     * @param mixed PostgreSQL|PDO
+     * @return mixed
      */
     function put($connection);
+    /**
+     * Forget a connection the caller is discarding, WITHOUT opening a replacement now -
+     * the next get() opens one lazily. See ReleasesPoolSlots for why put(null) is not that.
+     */
+    function release(): void;
 }

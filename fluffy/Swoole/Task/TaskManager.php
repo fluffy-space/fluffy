@@ -53,29 +53,58 @@ class TaskManager
         $this->uniqueId = $appServer->uniqueId;
     }
 
+    /**
+     * Put a [class, method, params] payload on the task pool, from ANY worker.
+     *
+     * Swoole refuses `Server->task()` inside a task worker: it warns and returns false, so the work
+     * is silently dropped. Cron job bodies run in a task worker, so any job that dispatched a task
+     * (the resource watchdog emailing an alert, the weekly report, the Paddle key reminder) lost it
+     * that way — a warning in the journal and no email, with nothing else to show for it.
+     *
+     * From a task worker the payload therefore goes over the worker pipe instead. It lands in
+     * processMessage(), whose plain-array branch does exactly what AppServer::onTask does
+     * (`app->task($class, $method, $params)`), so the work runs in a task worker either way — only
+     * the route there differs. If the round-robin picks this very worker, sendToWorker() runs it
+     * inline, which is still the same scope the task pool would have given it.
+     */
+    private function queueTask(array $payload): void
+    {
+        if ($this->appServer->server->taskworker) {
+            $this->sendToWorker(new TaskMessage($this->uniqueId, $payload));
+            return;
+        }
+        $this->appServer->server->task($payload);
+    }
+
     public function dispatch(Closure $action, ...$params)
     {
         $refl = new ReflectionFunction($action);
-        $this->appServer->server->task([$refl->getClosureCalledClass()->getName(), $refl->getName(), $params]);
+        $this->queueTask([$refl->getClosureCalledClass()->getName(), $refl->getName(), $params]);
     }
 
     public function dispatchArray(array $action, ...$params)
     {
         [$class, $method] = $action;
-        $this->appServer->server->task([$class, $method, $params]);
+        $this->queueTask([$class, $method, $params]);
     }
 
     public function dispatchArrayAndRepeat(array $action, ...$params)
     {
         [$class, $method] = $action;
-        $this->appServer->server->task([$class, $method, $params, true]);
+        $this->queueTask([$class, $method, $params, true]);
     }
 
     public function dispatchArrayCallback(array $action, callable $onFinish, ...$params)
     {
         [$class, $method] = $action;
-        $this->appServer->server->task([$class, $method, $params]);
+        $this->queueTask([$class, $method, $params]);
     }
+
+    /**
+     * NB: `taskwait` has the same task-worker restriction as `task()` and there is no blocking
+     * equivalent over the pipe, so this one still cannot be called from a task worker. Nothing on
+     * the cron path does; if that changes, the caller wants dispatchArray() and a callback instead.
+     */
 
     public function dispatchArrayAndWait(array $action, ...$params)
     {

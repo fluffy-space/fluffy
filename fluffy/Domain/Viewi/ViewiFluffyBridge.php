@@ -51,6 +51,13 @@ class ViewiFluffyBridge extends DefaultBridge
         );
         $newRequest->cookie = $cookies; // copy cookie from parent
         $newRequest->header = $headers; // copy headers from parent
+        // Carry the payload too. Serialised the same way DefaultBridge::externalRequest sends it,
+        // because the controller reads it back with json_decode — so an SSR-issued POST/PUT binds
+        // its typed model exactly like the browser's own request would. Without this the body was
+        // silently dropped and the handler received null.
+        if ($request->body !== null) {
+            $newRequest->body = is_string($request->body) ? $request->body : (string) json_encode($request->body);
+        }
         $scope = $this->serviceProvider->createScope();
         try {
             // create request and http context

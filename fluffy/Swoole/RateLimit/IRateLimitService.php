@@ -12,4 +12,13 @@ interface IRateLimitService
      * X-RateLimit-Remaining) after calling limit().
      */
     function peek(string $key): int;
+
+    /**
+     * Forget $key's open window, as if it had never been hit.
+     *
+     * For TESTS: a limiter is shared process state, so a suite that exercises a limited endpoint
+     * poisons every later suite (and its own next run) for the rest of the window. Exposed through
+     * the dev-only test facility, never on a production build.
+     */
+    function reset(string $key): void;
 }

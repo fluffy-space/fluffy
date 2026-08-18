@@ -27,6 +27,11 @@ class SwooleTableRateLimitService implements IRateLimitService
         return true;
     }
 
+    public function reset(string $key): void
+    {
+        $this->appServer->timeTable->del($key);
+    }
+
     public function peek(string $key): int
     {
         $value = $this->appServer->timeTable->get($key, 'value');

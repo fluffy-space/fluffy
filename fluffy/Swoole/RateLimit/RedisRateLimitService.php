@@ -24,6 +24,11 @@ class RedisRateLimitService implements IRateLimitService
         return true;
     }
 
+    public function reset(string $key): void
+    {
+        $this->redisConnector->get()->del("RL:$key");
+    }
+
     public function peek(string $key): int
     {
         $value = $this->redisConnector->get()->get("RL:$key");

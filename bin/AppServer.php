@@ -100,7 +100,14 @@ class AppServer
         $this->serverTable->column('data', Swoole\Table::TYPE_STRING, 64);
         $this->serverTable->create();
 
-        $this->server = new Server("0.0.0.0", $this->port, SWOOLE_PROCESS);
+        // Loopback by DEFAULT, not 0.0.0.0: nginx fronts the app in every environment and
+        // proxies to 127.0.0.1:<port>, so binding every interface published a second, unfronted
+        // way in — no TLS, none of the security headers, and (because the app reads the client
+        // address from X-Real-IP) a caller who sets that header himself, which is every IP rate
+        // limit at once. Set `host` in configs/server.php only for a setup where the proxy is on
+        // ANOTHER machine, and firewall the port if you do.
+        $host = $this->config['host'] ?? '127.0.0.1';
+        $this->server = new Server($host, $this->port, SWOOLE_PROCESS);
         $this->server->set($this->config['swoole']);
 
         $this->server->on('Open', [$this, 'onOpen']);
@@ -136,7 +143,7 @@ class AppServer
     public function onServerStart(Server $server)
     {
         echo "CPU numbers: " . swoole_cpu_num() . "\n";
-        echo "Swoole http server is started at http://0.0.0.0:{$this->port}\n";
+        echo "Swoole http server is started at http://" . ($this->config['host'] ?? '127.0.0.1') . ":{$this->port}\n";
         // go(function () {
         //     while (1) {
         //         echo "[Timer] time table watcher waiting.\n";

@@ -28,7 +28,6 @@ class UserVerificationCodeEntityMap extends BaseEntityMap
             'Id' => CommonMap::$Id,
 
             'UserId' => CommonMap::$BigInt,
-            'Code' => CommonMap::$VarChar255,
             'CodeHash' => CommonMap::$VarChar255,
             'Expire' => CommonMap::$IntNull,
 

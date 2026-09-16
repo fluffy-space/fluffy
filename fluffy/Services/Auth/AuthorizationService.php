@@ -431,8 +431,14 @@ class AuthorizationService
     {
         $code = $string ? UtilsService::randomString($length) : UtilsService::randomInt($length);
         $verificationEntity = new UserVerificationCodeEntity();
+        // The code is a bearer credential: whoever holds it can reset the password of the account
+        // it belongs to. Only its sha256 is stored (the same treatment UserToken gets), so a copy
+        // of the table — a backup, a read-only replica, an admin looking — yields nothing usable.
+        // The raw value lives on the entity for this request only, for the caller to email out.
+        // It used to be stored verbatim: $length > 255 gated the hashing, and the default is 32,
+        // so in practice nothing was ever hashed.
         $verificationEntity->Code = $code;
-        $verificationEntity->CodeHash = $length > 255 ? $this->hashToken($code) : $verificationEntity->Code;
+        $verificationEntity->CodeHash = $this->hashToken($code);
         $verificationEntity->UserId = $userId;
         $verificationEntity->Expire = time() + $lifeTime;
         $this->userVerifications->create($verificationEntity);
@@ -442,7 +448,10 @@ class AuthorizationService
     function verifyCode(string $code): ?UserVerificationCodeEntity
     {
         /** @var UserVerificationCodeEntity|null $verificationEntity */
-        $verificationEntity = $this->userVerifications->find(UserVerificationCodeEntityMap::PROPERTY_CodeHash, $code);
+        $verificationEntity = $this->userVerifications->find(
+            UserVerificationCodeEntityMap::PROPERTY_CodeHash,
+            $this->hashToken($code)
+        );
         if ($verificationEntity !== null) {
             if ($verificationEntity->Expire !== null && $verificationEntity->Expire < time()) {
                 // expired

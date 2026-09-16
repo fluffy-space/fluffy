@@ -10,6 +10,7 @@ use Components\Models\SubFolder\EntityNameModel;
 use Components\Models\SubFolder\EntityNameValidation;
 use Fluffy\Controllers\BaseController;
 use Fluffy\Data\Mapper\IMapper;
+use Fluffy\Data\Query\Search;
 
 class EntityNameController extends BaseController
 {
@@ -30,11 +31,11 @@ class EntityNameController extends BaseController
         
         if ($search) {
             $search = strtolower($search);
-            $parts = explode(' ', $search);
+            $parts = Search::terms($search);
             foreach ($parts as $part) {
                 if (trim($part)) {
                     $where[] = [
-                        [EntityNameEntityMap::PROPERTY_Title, 'like', "%$part%"]
+                        [EntityNameEntityMap::PROPERTY_Title, 'like', Search::contains($part)]
                     ];
                 }
             }

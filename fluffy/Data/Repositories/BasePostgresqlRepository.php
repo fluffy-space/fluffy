@@ -62,6 +62,22 @@ class BasePostgresqlRepository
         }
     }
 
+    /**
+     * One COLUMN name, quoted for SQL. Schema and table names are not routed through here: those
+     * are class constants on the entity map, while a column name can be chosen by the CALLER —
+     * search()'s $order keys, buildWhere()'s conditions, find()'s key. Every such name is a
+     * `PROPERTY_` constant today, and this is what keeps that a convention rather than a
+     * requirement: a double quote inside the name closes the quoted identifier and everything
+     * after it is SQL, which no value escaping would catch because it never reaches a value.
+     */
+    protected static function ident(string $name): string
+    {
+        return '"' . str_replace('"', '""', $name) . '"';
+    }
+
+    /** Aggregate functions search() will emit; anything else is a caller bug, not SQL to run. */
+    private const AGGREGATES = ['COUNT', 'SUM', 'MIN', 'MAX', 'AVG'];
+
     static function getTime(): int
     {
         $timeOfDay = gettimeofday();
@@ -118,14 +134,14 @@ class BasePostgresqlRepository
         $select = '';
         $comma = '';
         foreach ($this->entityMap::Columns() as $property => $_) {
-            $select .= "$comma\"{$property}\"";
+            $select .= $comma . self::ident($property);
             $comma = ', ';
         }
 
         $orderGlue = "ORDER BY ";
         $orderBy = '';
         foreach ($order as $column => $orderWay) {
-            $orderBy .= $orderGlue . "\"$column\"" . ($orderWay > 0 ? " ASC" : " DESC");
+            $orderBy .= $orderGlue . self::ident($column) . ($orderWay > 0 ? " ASC" : " DESC");
             $orderGlue = ', ';
         }
 
@@ -155,7 +171,11 @@ class BasePostgresqlRepository
             $aggregateSql = '';
             $dlm = '';
             foreach ($aggregate as $aggregateItem) {
-                $aggregateSql .= $dlm . $aggregateItem[1] . '("' . $aggregateItem[2] . '") as "' . $aggregateItem[0] . '"';
+                $function = strtoupper((string) $aggregateItem[1]);
+                if (!in_array($function, self::AGGREGATES, true)) {
+                    throw new RuntimeException(static::class . ": unsupported aggregate function '{$aggregateItem[1]}'.");
+                }
+                $aggregateSql .= $dlm . $function . '(' . self::ident($aggregateItem[2]) . ') as ' . self::ident($aggregateItem[0]);
                 $dlm = ', ';
             }
             $countSql = "SELECT $aggregateSql FROM {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" $wherePart";
@@ -181,7 +201,7 @@ class BasePostgresqlRepository
                 $value = $this->buildValue($hasOperator ? $condition[2] : $condition[1]);
                 $operator = $hasOperator ? $condition[1] : '=';
 
-                $wherePart .= $whereGlue . "\"$column\" $operator $value";
+                $wherePart .= $whereGlue . self::ident($column) . " $operator $value";
             }
             $whereGlue = " $concatOperator ";
         }
@@ -218,10 +238,10 @@ class BasePostgresqlRepository
         $select = '';
         $comma = '';
         foreach ($this->entityMap::Columns() as $property => $_) {
-            $select .= "$comma\"{$property}\"";
+            $select .= $comma . self::ident($property);
             $comma = ', ';
         }
-        $orderBy = $ordering !== null ? ("ORDER BY \"$ordering\"" . ($order > 0 ? " ASC" : " DESC")) : '';
+        $orderBy = $ordering !== null ? ("ORDER BY " . self::ident($ordering) . ($order > 0 ? " ASC" : " DESC")) : '';
         $limit = '';
         if ($size !== null) {
             $offset = ($page - 1) * $size;
@@ -237,18 +257,25 @@ class BasePostgresqlRepository
     }
 
     /**
+     * `int`, not an untyped parameter: the key goes into the statement AS A NUMBER, with no
+     * literal escaping around it (a quoted literal would not compare against a bigint key). That
+     * is only safe while the value cannot be text, and every entity's key is `BaseEntity::$Id`,
+     * an int — so the type declaration is what makes the interpolation below true rather than
+     * merely conventional. A caller handing this a request string now fails here instead of
+     * writing the string into the WHERE clause.
+     *
      * @return TEntity|null
      */
-    public function getById($Id): ?BaseEntity
+    public function getById(int $Id): ?BaseEntity
     {
         $select = '';
         $comma = '';
         foreach ($this->entityMap::Columns() as $property => $_) {
-            $select .= "$comma\"{$property}\"";
+            $select .= $comma . self::ident($property);
             $comma = ', ';
         }
         $keyName = $this->entityMap::$PrimaryKeys[0];
-        $primaryKeyCondition = "\"{$keyName}\" = $Id";
+        $primaryKeyCondition = self::ident($keyName) . " = $Id";
 
         $sql = "SELECT $select FROM {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" WHERE $primaryKeyCondition";
         $arr = $this->connector->query($sql);
@@ -278,7 +305,7 @@ class BasePostgresqlRepository
         $select = '';
         $comma = '';
         foreach ($this->entityMap::Columns() as $property => $_) {
-            $select .= "$comma\"{$property}\"";
+            $select .= $comma . self::ident($property);
             $comma = ', ';
         }
         if (is_array($findKey)) {
@@ -287,7 +314,7 @@ class BasePostgresqlRepository
                 $wherePart = "WHERE $wherePart";
             }
         } else {
-            $wherePart = "WHERE \"{$findKey}\" = {$this->connector->escapeLiteral($value)}";
+            $wherePart = "WHERE " . self::ident($findKey) . " = {$this->connector->escapeLiteral($value)}";
         }
         $sql = "SELECT $select FROM {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" $wherePart";
         // echo $sql . PHP_EOL;
@@ -311,7 +338,7 @@ class BasePostgresqlRepository
         $keyName = $this->entityMap::$PrimaryKeys[0];
         foreach ($this->entityMap::Columns() as $property => $columnMeta) {
             if ($property !== $keyName) {
-                $columns .= "$comma\"{$property}\"";
+                $columns .= $comma . self::ident($property);
                 $value = $entity->{$property};
                 if (is_bool($entity->{$property})) {
                     $value = $entity->{$property} ? 'true' : 'false';
@@ -331,7 +358,7 @@ class BasePostgresqlRepository
             }
         }
         $sql = "INSERT INTO {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" (" . PHP_EOL . '    ' . $columns . PHP_EOL . ')';
-        $sql .= '    VALUES' . PHP_EOL . "($values) RETURNING \"$keyName\";";
+        $sql .= '    VALUES' . PHP_EOL . "($values) RETURNING " . self::ident($keyName) . ";";
         // echo $sql . PHP_EOL;
         $arr = $this->connector->query($sql);
         if (isset($arr[0])) {
@@ -380,11 +407,11 @@ class BasePostgresqlRepository
                 } else {
                     $value = $this->connector->escapeLiteral($entity->{$property});
                 }
-                $columns .= "$comma\"{$property}\" = $value";
+                $columns .= $comma . self::ident($property) . " = $value";
                 $comma = ', ';
             }
         }
-        $where = "WHERE \"{$this->entityMap::$Table}\".\"$keyName\" = {$entity->Id}";
+        $where = 'WHERE "' . $this->entityMap::$Table . '".' . self::ident($keyName) . " = {$entity->Id}";
         $sql = "UPDATE {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" SET " . PHP_EOL . '    ' . $columns . PHP_EOL . " $where;";
         // echo $sql . PHP_EOL;
         // return true;
@@ -410,8 +437,8 @@ class BasePostgresqlRepository
         $tableColumns = $this->entityMap::Columns();
         foreach ($tableColumns as $property => $columnMeta) {
             if ($options->insertIds || $property !== $keyName) {
-                $columns .= "$comma\"{$property}\"";
-                $sourceColumns .= "{$comma}SRC.\"{$property}\"";
+                $columns .= $comma . self::ident($property);
+                $sourceColumns .= $comma . 'SRC.' . self::ident($property);
                 $comma = ', ';
             }
         }
@@ -460,7 +487,7 @@ class BasePostgresqlRepository
         $matchOn = '';
         $matchOnGlue = '';
         foreach ($options->onCondition as $onCondition) {
-            $matchOn .= $matchOnGlue . 'DST."' . $onCondition[0] . '" ' .  $onCondition[1] .  ' SRC."' . $onCondition[2] . '"';
+            $matchOn .= $matchOnGlue . 'DST.' . self::ident($onCondition[0]) . ' ' . $onCondition[1] . ' SRC.' . self::ident($onCondition[2]);
             $matchOnGlue = "AND ";
         }
         $sql .= "ON $matchOn" . PHP_EOL;
@@ -491,7 +518,7 @@ class BasePostgresqlRepository
     {
         $this->assertEntityType($entity);
         $keyName = $this->entityMap::$PrimaryKeys[0];
-        $where = "WHERE \"{$this->entityMap::$Table}\".\"$keyName\" = {$entity->Id}";
+        $where = 'WHERE "' . $this->entityMap::$Table . '".' . self::ident($keyName) . " = {$entity->Id}";
         $sql = "DELETE FROM {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" $where;";
         // echo $sql . PHP_EOL;
         // return true;

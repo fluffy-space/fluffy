@@ -98,7 +98,7 @@ class BaseClickHouseRepository
         return $res['list'][0] ?? null;
     }
 
-    public function getById($id): ?BaseClickHouseEntity
+    public function getById(int $id): ?BaseClickHouseEntity
     {
         return $this->firstOrDefault([[BaseClickHouseEntityMap::PROPERTY_Id, '=', $id]]);
     }

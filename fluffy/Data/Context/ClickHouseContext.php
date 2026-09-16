@@ -28,6 +28,15 @@ class ClickHouseContext
         self::$map[$entityType] = $entityMap;
     }
 
+    /**
+     * One COLUMN name, backtick-quoted for ClickHouse. Same reasoning as DbContext::ident(): the
+     * name can come from the caller, and a backtick inside it would end the identifier.
+     */
+    public static function ident(string $name): string
+    {
+        return '`' . str_replace('`', '\\`', $name) . '`';
+    }
+
     public function execute(Query $query)
     {
         $entityMap = $query->entityTypeMap
@@ -70,14 +79,14 @@ class ClickHouseContext
         $select = '';
         $comma = '';
         foreach ($columns as $property => $_) {
-            $select .= "$comma{$aliasPrefix}`{$property}`";
+            $select .= $comma . $aliasPrefix . self::ident($property);
             $comma = ', ';
         }
 
         $orderGlue = 'ORDER BY ';
         $orderBy = '';
         foreach ($query->orderBys as [$column, $orderWay]) {
-            $orderBy .= $orderGlue . "{$aliasPrefix}`$column`" . ($orderWay > 0 ? ' ASC' : ' DESC');
+            $orderBy .= $orderGlue . $aliasPrefix . self::ident($column) . ($orderWay > 0 ? ' ASC' : ' DESC');
             $orderGlue = ', ';
         }
 
@@ -112,7 +121,7 @@ class ClickHouseContext
         if (!($expression->left instanceof ExpressionGroup)) {
             if ($expression->left instanceof Column) {
                 $aliasPrefix = $expression->left->alias ? "{$expression->left->alias}." : "";
-                $raw .= "$aliasPrefix`{$expression->left->name}`";
+                $raw .= $aliasPrefix . self::ident($expression->left->name);
             } elseif ($expression->left instanceof Expression) {
                 $raw .= $this->buildExpression($expression->left);
             } else {
@@ -126,7 +135,7 @@ class ClickHouseContext
             if ($expression->right !== null) {
                 if ($expression->right instanceof Column) {
                     $aliasPrefix = $expression->right->alias ? "{$expression->right->alias}." : "";
-                    $raw .= "$aliasPrefix`{$expression->right->name}`";
+                    $raw .= $aliasPrefix . self::ident($expression->right->name);
                 } elseif ($expression->right instanceof Expression) {
                     $raw .= $this->buildExpression($expression->right);
                 } else {

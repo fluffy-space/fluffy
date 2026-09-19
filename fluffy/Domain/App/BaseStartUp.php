@@ -46,6 +46,8 @@ use Fluffy\Swoole\Database\PostgresPDOPool;
 use Fluffy\Swoole\Database\RedisCachePool;
 use Fluffy\Swoole\RateLimit\IRateLimitService;
 use Fluffy\Swoole\RateLimit\RedisRateLimitService;
+use Fluffy\Swoole\Lock\ILockService;
+use Fluffy\Swoole\Lock\RedisLockService;
 use Fluffy\Swoole\RateLimit\SwooleTableRateLimitService;
 use Fluffy\Swoole\Task\CronMonitorService;
 use Fluffy\Swoole\Task\TaskManager;
@@ -103,6 +105,8 @@ class BaseStartUp implements IStartUp
         $serviceProvider->addScoped(IRateLimitService::class, RedisRateLimitService::class);
         // OR, chose one
         // $serviceProvider->addSingleton(IRateLimitService::class, SwooleTableRateLimitService::class);
+        // Redis only: a lock must hold across workers AND across the blue/green servers.
+        $serviceProvider->addScoped(ILockService::class, RedisLockService::class);
         $serviceProvider->addSingleton(HubServer::class);
         $this->config = new Config();
         $this->config->addArray(require($this->appDir . '/../configs/app.php'));

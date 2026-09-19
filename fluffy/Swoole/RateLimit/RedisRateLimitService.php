@@ -24,7 +24,9 @@ class RedisRateLimitService implements IRateLimitService
         $redis = $this->redisConnector->get();
         $final = $redis->incr($redisKey); // to test overflow , 9223372036854775807
         // print_r([$key, $final]);
-        if ($final === 1) {
+        // Also when the key has no TTL (-1): a crash between INCR and EXPIRE would otherwise leave the
+        // bucket full forever. The next hit heals it.
+        if ($final === 1 || $redis->ttl($redisKey) === -1) {
             $redis->expire($redisKey, $lifetime);
         }
         // $final is false on overflow

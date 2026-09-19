@@ -325,8 +325,13 @@ class BasePostgresqlRepository
 
     /**
      * @param TEntity $entity
+     * @param string[]|null $ignoreConflictOn columns of a unique index: when a row with the same
+     *        values exists, insert nothing (INSERT … ON CONFLICT DO NOTHING) and return false. Atomic
+     *        across workers and servers, so find-or-create needs no lock. An index declared
+     *        NullsNotDistinct also matches NULL keys.
+     * @return bool true = inserted (Id is set); false = nothing inserted, $entity->Id unchanged
      */
-    public function create(BaseEntity $entity)
+    public function create(BaseEntity $entity, ?array $ignoreConflictOn = null)
     {
         $this->assertEntityType($entity);
         $columns = '';
@@ -358,7 +363,12 @@ class BasePostgresqlRepository
             }
         }
         $sql = "INSERT INTO {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" (" . PHP_EOL . '    ' . $columns . PHP_EOL . ')';
-        $sql .= '    VALUES' . PHP_EOL . "($values) RETURNING " . self::ident($keyName) . ";";
+        $sql .= '    VALUES' . PHP_EOL . "($values)";
+        if ($ignoreConflictOn) {
+            $target = implode(', ', array_map(fn($column) => self::ident($column), $ignoreConflictOn));
+            $sql .= " ON CONFLICT ($target) DO NOTHING";
+        }
+        $sql .= " RETURNING " . self::ident($keyName) . ";";
         // echo $sql . PHP_EOL;
         $arr = $this->connector->query($sql);
         if (isset($arr[0])) {
@@ -647,12 +657,25 @@ class BasePostgresqlRepository
             $indexSql = <<<EOD
             CREATE{$unique} INDEX IF NOT EXISTS "$indexName"
                 ON $schema."$tableName" USING btree
-                ($indexColumns);
+                ($indexColumns){$this->indexClauses($indexMeta)};
             EOD;
             $indexes .= $comma . $indexSql;
         }
         $this->connector->query($indexes);
         return true;
+    }
+
+    /**
+     * Optional index clauses: 'NullsNotDistinct' => true makes a unique index treat NULLs as equal
+     * (PostgreSQL 15+), and 'Where' => '"Col" IS NOT NULL' makes it a partial index.
+     */
+    private function indexClauses(array $indexMeta): string
+    {
+        $sql = !empty($indexMeta['NullsNotDistinct']) ? ' NULLS NOT DISTINCT' : '';
+        if (!empty($indexMeta['Where'])) {
+            $sql .= " WHERE {$indexMeta['Where']}";
+        }
+        return $sql;
     }
 
     /**
@@ -759,7 +782,7 @@ class BasePostgresqlRepository
             $indexSql = <<<EOD
             CREATE{$unique} INDEX IF NOT EXISTS "$indexName"
                 ON $schema."$tableName" USING btree
-                ($indexColumns);
+                ($indexColumns){$this->indexClauses($indexMeta)};
             EOD;
             $indexes[] = $indexSql;
         }

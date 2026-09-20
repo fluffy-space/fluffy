@@ -588,6 +588,65 @@ class BasePostgresqlRepository
     }
 
     /**
+     * Set the same values on every row matching $where, in one statement — the write twin of
+     * deleteWhere(), for the cases update() cannot serve: "move every link of this folder", "expire
+     * every token of this user". Loading those rows to write them one by one is the alternative.
+     *
+     * $values is [column => value]; UpdatedOn is stamped automatically, as in update(). Like
+     * deleteWhere it refuses an empty $where rather than touching the whole table.
+     *
+     * @param array<string,mixed> $values
+     * @return int rows updated
+     */
+    public function updateWhere(array $values, array $where): int
+    {
+        $wherePart = $this->buildWhere($where);
+        if (trim($wherePart) === '' || $values === []) {
+            return 0;
+        }
+        $columns = $this->entityMap::Columns();
+        $values[BaseEntityMap::PROPERTY_UpdatedOn] = self::getTime();
+        $set = '';
+        $comma = '';
+        foreach ($values as $property => $value) {
+            if (!isset($columns[$property])) {
+                throw new RuntimeException(static::class . ": '$property' is not a column of \"{$this->entityMap::$Table}\".");
+            }
+            $set .= $comma . self::ident($property) . ' = ' . $this->buildValue($value);
+            $comma = ', ';
+        }
+        $sql = "UPDATE {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" SET $set WHERE $wherePart;";
+        $this->connector->query($sql);
+        return (int) $this->connector->affectedRows();
+    }
+
+    /**
+     * How many rows share each value of $column — one grouped query instead of a count per value
+     * (a sidebar with 50 folders must not run 50 counts). NULL comes back under the key ''.
+     *
+     * @return array<string,int> value => count
+     */
+    public function countBy(string $column, array $where = []): array
+    {
+        $columns = $this->entityMap::Columns();
+        if (!isset($columns[$column])) {
+            throw new RuntimeException(static::class . ": '$column' is not a column of \"{$this->entityMap::$Table}\".");
+        }
+        $wherePart = $this->buildWhere($where);
+        if (trim($wherePart) !== '') {
+            $wherePart = "WHERE $wherePart";
+        }
+        $name = self::ident($column);
+        $sql = "SELECT $name, COUNT(*) as \"count\" FROM {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\""
+            . " $wherePart GROUP BY $name";
+        $counts = [];
+        foreach ($this->connector->query($sql) ?: [] as $row) {
+            $counts[(string) ($row[$column] ?? '')] = (int) ($row['count'] ?? 0);
+        }
+        return $counts;
+    }
+
+    /**
      * Bulk-delete every row matching $where (same shape as search()'s $where,
      * e.g. [[Map::PROPERTY_Expire, '<', $cutoff]]) in a single statement, and
      * return the number of rows removed.

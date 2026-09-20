@@ -434,6 +434,50 @@ class BasePostgresqlRepository
     }
 
     /**
+     * Columns this batch actually writes. A column that is NULL in EVERY entity is left out of the
+     * statement: the inserted row gets NULL either way, and the text for it ("NULL::bigint, " per
+     * row) is what a wide, mostly-empty table pays on a 5,000-row chunk — it doubled the statement
+     * for TeamShortUrl once FolderId/Title/Notes arrived (docs/link-organisation-plan.md §2b).
+     *
+     * Never skips a column carrying a DB DEFAULT (omitting it would insert the default, not NULL),
+     * a match column, or anything when the merge updates rather than only inserts.
+     *
+     * @param TEntity[] $entities
+     */
+    private function columnsInUse(array $tableColumns, array $entities, MergeOptions $options, string $keyName): array
+    {
+        if ($options->update) {
+            return $tableColumns;
+        }
+        $keep = [];
+        foreach ($options->onCondition as $onCondition) {
+            $keep[$onCondition[0]] = true;
+            $keep[$onCondition[2]] = true;
+        }
+        // The key is written only with insertIds, and is unset on a new entity either way.
+        if (!$options->insertIds) {
+            $keep[$keyName] = true;
+        }
+        $candidates = [];
+        foreach ($tableColumns as $property => $columnMeta) {
+            if (!isset($keep[$property]) && !isset($columnMeta['default'])) {
+                $candidates[$property] = true;
+            }
+        }
+        foreach ($entities as $entity) {
+            foreach ($candidates as $property => $_) {
+                if ($entity->{$property} !== null) {
+                    unset($candidates[$property]);
+                }
+            }
+            if (!$candidates) {
+                return $tableColumns;
+            }
+        }
+        return array_diff_key($tableColumns, $candidates);
+    }
+
+    /**
      * @param TEntity[] $entities
      */
     public function merge(array $entities, MergeOptions $options): bool
@@ -444,18 +488,9 @@ class BasePostgresqlRepository
         $comma = '';
         $newLine = PHP_EOL;
         $keyName = $this->entityMap::$PrimaryKeys[0];
-        $tableColumns = $this->entityMap::Columns();
-        foreach ($tableColumns as $property => $columnMeta) {
-            if ($options->insertIds || $property !== $keyName) {
-                $columns .= $comma . self::ident($property);
-                $sourceColumns .= $comma . 'SRC.' . self::ident($property);
-                $comma = ', ';
-            }
-        }
-        $valueList = '';
-        $groupComma = '    ';
-        // Hoisted: one property read instead of one per row (a bulk batch runs 5000 rows). The
-        // whole per-row check costs ~0.09ms per batch against the ~10ms of building the statement.
+        // First pass: reject a foreign entity and stamp the timestamps, BEFORE anything reads a
+        // property off these entities (CreatedOn/UpdatedOn are non-nullable and may be unset).
+        // Hoisted: one property read instead of one per row (a bulk batch runs 5000 rows).
         $entityType = $this->entityType;
         foreach ($entities as $entity) {
             if (!$entity instanceof $entityType) {
@@ -466,6 +501,18 @@ class BasePostgresqlRepository
             }
             $entity->CreatedOn = $now;
             $entity->UpdatedOn = $now;
+        }
+        $tableColumns = $this->columnsInUse($this->entityMap::Columns(), $entities, $options, $keyName);
+        foreach ($tableColumns as $property => $columnMeta) {
+            if ($options->insertIds || $property !== $keyName) {
+                $columns .= $comma . self::ident($property);
+                $sourceColumns .= $comma . 'SRC.' . self::ident($property);
+                $comma = ', ';
+            }
+        }
+        $valueList = '';
+        $groupComma = '    ';
+        foreach ($entities as $entity) {
             $comma = '';
             $values = '';
             foreach ($tableColumns as $property => $columnMeta) {

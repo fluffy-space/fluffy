@@ -756,8 +756,18 @@ class BasePostgresqlRepository
             }
             $indexColumns = '';
             $columnComma = '';
-            foreach ($indexMeta['Columns'] as $column) {
-                $indexColumns .= "$columnComma\"$column\" ASC NULLS LAST";
+            // Same per-column shape createTable accepts: a plain name, or [name => ['Order' => 'DESC']]
+            // when the index has to serve an ORDER BY that runs the other way.
+            foreach ($indexMeta['Columns'] as $column => $columnMeta) {
+                $indexOrder = 'ASC';
+                if (is_array($columnMeta)) {
+                    if (isset($columnMeta['Order'])) {
+                        $indexOrder = $columnMeta['Order'];
+                    }
+                } else {
+                    $column = $columnMeta;
+                }
+                $indexColumns .= "$columnComma\"$column\" $indexOrder NULLS LAST";
                 $columnComma = ', ';
             }
             $indexSql = <<<EOD

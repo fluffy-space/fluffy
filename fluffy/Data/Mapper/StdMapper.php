@@ -22,7 +22,14 @@ class StdMapper implements IMapper
                     $propertyType = $property->getType();
                     if ($propertyType != null) {
                         $typeName = $propertyType->getName();
-                        $instance->$key = $this->map($typeName, $value, $instance->$key);
+                        if ($propertyType->isBuiltin()) {
+                            // A JSON object landing on a scalar/array property: a MAP, not a nested
+                            // model ({"12": 3} into `array $Previous`). Recursing here treated the
+                            // array as an object to fill and died in property_exists().
+                            $instance->$key = $typeName === 'array' ? (array) $value : $value;
+                        } else {
+                            $instance->$key = $this->map($typeName, $value, $instance->$key);
+                        }
                     } else {
                         $instance->$key = $value;
                     }

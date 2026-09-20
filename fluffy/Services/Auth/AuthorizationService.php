@@ -60,6 +60,11 @@ class AuthorizationService
 
     public function authorizeRequest()
     {
+        // No request at all — a CLI command, a cron job, a task worker. Nobody is signed in, which
+        // is what every caller means by a null user; without this the dereference below is fatal.
+        if ($this->httpContext === null) {
+            return;
+        }
         if ($this->authCookie ?? ($this->authCookie = $this->httpContext->request->getCookie(self::COOKIE_NAME))) {
             if ($this->authCookie) {
                 // Expect exactly "token.userId.checksum". A malformed cookie

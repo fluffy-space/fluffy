@@ -25,7 +25,7 @@ class BasePostgresqlRepository
     /**
      * PROTECTED, not private: a repository subclass writing its own SQL is the intended
      * extension point, and every such method needs the map (schema/table names) and the
-     * connector. Private made those reads resolve to an undefined property on the CHILD —
+     * connector. Private made those reads resolve to an undefined property on the CHILD -
      * a warning, then `null::$Schema`, i.e. "Class name must be a valid object or a string"
      * at runtime rather than anything the caller could read as a missing dependency.
      *
@@ -57,14 +57,14 @@ class BasePostgresqlRepository
         if (!$entity instanceof $this->entityType) {
             throw new RuntimeException(
                 static::class . ' expects ' . $this->entityType . ', got ' . $entity::class
-                    . " — refusing to write it to \"{$this->entityMap::$Table}\"."
+                    . " - refusing to write it to \"{$this->entityMap::$Table}\"."
             );
         }
     }
 
     /**
      * One COLUMN name, quoted for SQL. Schema and table names are not routed through here: those
-     * are class constants on the entity map, while a column name can be chosen by the CALLER —
+     * are class constants on the entity map, while a column name can be chosen by the CALLER -
      * search()'s $order keys, buildWhere()'s conditions, find()'s key. Every such name is a
      * `PROPERTY_` constant today, and this is what keeps that a convention rather than a
      * requirement: a double quote inside the name closes the quoted identifier and everything
@@ -260,7 +260,7 @@ class BasePostgresqlRepository
      * `int`, not an untyped parameter: the key goes into the statement AS A NUMBER, with no
      * literal escaping around it (a quoted literal would not compare against a bigint key). That
      * is only safe while the value cannot be text, and every entity's key is `BaseEntity::$Id`,
-     * an int — so the type declaration is what makes the interpolation below true rather than
+     * an int - so the type declaration is what makes the interpolation below true rather than
      * merely conventional. A caller handing this a request string now fails here instead of
      * writing the string into the WHERE clause.
      *
@@ -436,7 +436,7 @@ class BasePostgresqlRepository
     /**
      * Columns this batch actually writes. A column that is NULL in EVERY entity is left out of the
      * statement: the inserted row gets NULL either way, and the text for it ("NULL::bigint, " per
-     * row) is what a wide, mostly-empty table pays on a 5,000-row chunk — it doubled the statement
+     * row) is what a wide, mostly-empty table pays on a 5,000-row chunk - it doubled the statement
      * for TeamShortUrl once FolderId/Title/Notes arrived (docs/link-organisation-plan.md §2b).
      *
      * Never skips a column carrying a DB DEFAULT (omitting it would insert the default, not NULL),
@@ -496,7 +496,7 @@ class BasePostgresqlRepository
             if (!$entity instanceof $entityType) {
                 throw new RuntimeException(
                     static::class . ' expects ' . $entityType . ', got ' . $entity::class
-                        . " in a merge batch — refusing to write it to \"{$this->entityMap::$Table}\"."
+                        . " in a merge batch - refusing to write it to \"{$this->entityMap::$Table}\"."
                 );
             }
             $entity->CreatedOn = $now;
@@ -588,7 +588,7 @@ class BasePostgresqlRepository
     }
 
     /**
-     * Set the same values on every row matching $where, in one statement — the write twin of
+     * Set the same values on every row matching $where, in one statement - the write twin of
      * deleteWhere(), for the cases update() cannot serve: "move every link of this folder", "expire
      * every token of this user". Loading those rows to write them one by one is the alternative.
      *
@@ -621,7 +621,7 @@ class BasePostgresqlRepository
     }
 
     /**
-     * How many rows share each value of $column — one grouped query instead of a count per value
+     * How many rows share each value of $column - one grouped query instead of a count per value
      * (a sidebar with 50 folders must not run 50 counts). NULL comes back under the key ''.
      *
      * @return array<string,int> value => count
@@ -647,11 +647,38 @@ class BasePostgresqlRepository
     }
 
     /**
+     * One column of every row matching $where, as plain values - no entities built. For long id
+     * lists (a folder's link ids for an analytics scope) where search() would hydrate thousands of
+     * objects to read one field from each. $limit caps the rows; null = all.
+     *
+     * @return array<int,mixed>
+     */
+    public function pluck(string $column, array $where = [], ?int $limit = null): array
+    {
+        $columns = $this->entityMap::Columns();
+        if (!isset($columns[$column])) {
+            throw new RuntimeException(static::class . ": '$column' is not a column of \"{$this->entityMap::$Table}\".");
+        }
+        $wherePart = $this->buildWhere($where);
+        if (trim($wherePart) !== '') {
+            $wherePart = "WHERE $wherePart";
+        }
+        $name = self::ident($column);
+        $sql = "SELECT $name FROM {$this->entityMap::$Schema}.\"{$this->entityMap::$Table}\" $wherePart"
+            . ($limit !== null ? ' LIMIT ' . max(0, $limit) : '');
+        $values = [];
+        foreach ($this->connector->query($sql) ?: [] as $row) {
+            $values[] = $row[$column] ?? null;
+        }
+        return $values;
+    }
+
+    /**
      * Bulk-delete every row matching $where (same shape as search()'s $where,
      * e.g. [[Map::PROPERTY_Expire, '<', $cutoff]]) in a single statement, and
      * return the number of rows removed.
      *
-     * Refuses an empty / blank WHERE and returns 0 — so it can never wipe the
+     * Refuses an empty / blank WHERE and returns 0 - so it can never wipe the
      * whole table by accident. For retention / GC crons that prune by a
      * condition rather than one entity at a time.
      */

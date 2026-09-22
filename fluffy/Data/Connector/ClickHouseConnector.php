@@ -10,7 +10,7 @@ use Swoole\Coroutine\Http\Client;
 
 /**
  * Scoped (per-request) ClickHouse connector over the HTTP interface. Borrows a keep-alive
- * coroutine HTTP client from the pool on first use and returns it on dispose() — same lifecycle
+ * coroutine HTTP client from the pool on first use and returns it on dispose() - same lifecycle
  * as PostgreSqlClientConnector. A transport error discards the slot; a ClickHouse application
  * error (HTTP 4xx/5xx) keeps the socket and throws.
  */
@@ -21,6 +21,9 @@ class ClickHouseConnector implements IClickHouseConnector, IDisposable
 
     private ?Client $client = null;
     private bool $broken = false;
+    /** Set between beginSession() and endSession(): every request carries it (see beginSession). */
+    private ?string $sessionId = null;
+    private int $sessionTimeout = 60;
 
     public function __construct(private IClickHousePool $pool, private Config $config) {}
 
@@ -41,6 +44,10 @@ class ClickHouseConnector implements IClickHouseConnector, IDisposable
             $settings['enable_http_compression'] = 1; // make ClickHouse gzip the response too
         }
         foreach ($settings as $k => $v) { $qs[$k] = $v; }
+        if ($this->sessionId !== null) {
+            $qs['session_id'] = $this->sessionId;
+            $qs['session_timeout'] = $this->sessionTimeout;
+        }
         $path = '/' . (empty($qs) ? '' : ('?' . http_build_query($qs)));
 
         // With compression on, the pooled client carries a persistent Content-Encoding: gzip header,
@@ -94,6 +101,72 @@ class ClickHouseConnector implements IClickHouseConnector, IDisposable
         $this->execute($sql, $params);
     }
 
+    /**
+     * Start a ClickHouse HTTP session: until endSession(), every request carries the same
+     * session_id, so a temporary table created in it is visible to the queries that follow.
+     *
+     * Made for scoping many queries by one long list (a folder's link ids for a dashboard): upload
+     * the list once with temporaryTable(), then `WHERE ShortUrlId IN scope_ids` in each query,
+     * instead of sending the list with every query. ClickHouse runs one query at a time per
+     * session, so the queries of a session must be sequential - as they are on this scoped
+     * connector. The session (and its temporary tables) also expires on its own after
+     * $timeoutSeconds of inactivity, so a request that dies midway leaves nothing behind for long.
+     */
+    public function beginSession(int $timeoutSeconds = 60): string
+    {
+        $this->sessionId = 'fluffy-' . bin2hex(random_bytes(12));
+        $this->sessionTimeout = $timeoutSeconds;
+        return $this->sessionId;
+    }
+
+    /** Leave the session; its temporary tables are dropped first, rather than left to expire. */
+    public function endSession(array $temporaryTables = []): void
+    {
+        if ($this->sessionId === null) {
+            return;
+        }
+        try {
+            foreach ($temporaryTables as $table) {
+                $this->execute('DROP TEMPORARY TABLE IF EXISTS ' . $this->identifier($table));
+            }
+        } finally {
+            $this->sessionId = null;
+        }
+    }
+
+    /**
+     * Create an in-memory temporary table in the current session and fill it. `$structure` is a
+     * column list ('id UInt64'); each row is a scalar (one column) or a list of values. Values go
+     * as TSV in the request body, so the size is not limited like a URL parameter (a bound
+     * Array(UInt64) fails past ~10k ids: ClickHouse caps a form field at 128KB).
+     */
+    public function temporaryTable(string $name, string $structure, array $rows): void
+    {
+        if ($this->sessionId === null) {
+            throw new RuntimeException('ClickHouse temporary tables need a session: call beginSession() first.');
+        }
+        $table = $this->identifier($name);
+        $this->execute("CREATE TEMPORARY TABLE IF NOT EXISTS $table ($structure) ENGINE = Memory");
+        $this->execute("TRUNCATE TABLE $table");
+        if (!$rows) {
+            return;
+        }
+        $lines = [];
+        foreach ($rows as $row) {
+            $values = is_array($row) ? $row : [$row];
+            $lines[] = implode("\t", array_map(fn($v) => str_replace(["\\", "\t", "\n"], ["\\\\", "\\t", "\\n"], (string)$v), $values));
+        }
+        $this->execute("INSERT INTO $table FORMAT TSV\n" . implode("\n", $lines));
+    }
+
+    private function identifier(string $name): string
+    {
+        if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $name)) {
+            throw new RuntimeException("Not a valid ClickHouse table name: $name");
+        }
+        return "`$name`";
+    }
+
     public function escapeLiteral($value): string
     {
         return "'" . str_replace(['\\', "'"], ['\\\\', "\\'"], (string)$value) . "'";
@@ -106,6 +179,7 @@ class ClickHouseConnector implements IClickHouseConnector, IDisposable
 
     public function dispose()
     {
+        $this->sessionId = null;
         if ($this->client !== null) {
             $this->pool->put($this->broken ? null : $this->client);
             $this->client = null;

@@ -132,6 +132,13 @@ ssl_prefer_server_ciphers off;
 # DNS resolver for Lua (ACME / custom-domain cert issuance). systemd-resolved.
 resolver 127.0.0.53 ipv6=off valid=30s;
 resolver_timeout 5s;
+
+# Request body ceiling. nginx defaults to 1m, which is below what an app legitimately accepts:
+# a file upload, or a bulk API request of a few thousand rows. Over the limit the edge answers
+# its own HTML 413 and the request never reaches the app, so the app's own limit and its JSON
+# error never get a say. 12m clears a 10 MB upload plus multipart overhead; an app that wants
+# more sets its own in its site config, which overrides this.
+client_max_body_size 12m;
 TUNING_CONF
 
 # ----------------------------------------------------------------------------- 4. managed main nginx.conf

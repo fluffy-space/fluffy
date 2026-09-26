@@ -16,6 +16,11 @@ class FpmHttpResponse extends HttpResponse
         foreach ($this->headers as $key => $value) {
             header("$key: $value");
         }
+        if ($this->filePath !== null) {
+            header('Content-Length: ' . filesize($this->filePath));
+            readfile($this->filePath);
+            return;
+        }
         echo $this->body;
     }
 }

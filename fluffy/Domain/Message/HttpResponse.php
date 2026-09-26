@@ -9,6 +9,12 @@ abstract class HttpResponse
     public array $headers = [];
     public $rawData = null;
     /**
+     * A file on disk to send as the body instead of $body (ResponseBuilder::sendFile). The server
+     * streams it, so its bytes never enter PHP. The transfer outlives the request: never delete
+     * the file in the same request.
+     */
+    public ?string $filePath = null;
+    /**
      * output the response headers/content, etc
      * @return mixed 
      */

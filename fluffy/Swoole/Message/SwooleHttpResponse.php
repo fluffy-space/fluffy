@@ -21,6 +21,12 @@ class SwooleHttpResponse extends HttpResponse
         foreach ($this->headers as $key => $value) {
             $this->swooleResponse->header($key, $value);
         }
+        if ($this->filePath !== null) {
+            // Only the path crosses to the reactor thread, which sendfile(2)s it as the socket
+            // drains. The router has already checked the file exists and the request is HTTP/1.1.
+            $this->swooleResponse->sendfile($this->filePath);
+            return;
+        }
         $this->swooleResponse->end($this->body);
     }
 }

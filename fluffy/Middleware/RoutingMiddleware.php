@@ -44,6 +44,41 @@ class RoutingMiddleware implements IMiddleware
         return strlen($value) > $max ? substr($value, 0, $max) . '...' : $value;
     }
 
+    /**
+     * A ResponseBuilder::sendFile() answer. Refused before anything goes out when the file is
+     * missing (404 rather than an empty download), and on HTTP/2, where Swoole does not use
+     * sendfile(2) but reads the whole file into memory (swoole_http2_server_send_file). Behind
+     * nginx every request is HTTP/1.1, so HTTP/2 here means the setup changed: a loud 500 beats a
+     * worker quietly loading a gigabyte. HEAD gets the headers and no body.
+     */
+    private function fileResponse(ResponseBuilder $builder, bool $isHead): void
+    {
+        $response = $this->httpContext->response;
+        $path = (string) $builder->filePath;
+        $refusal = null;
+        if (!is_file($path)) {
+            $response->status = 404;
+            $refusal = 'Not Found';
+        } else if (str_starts_with($this->httpContext->request->server['server_protocol'] ?? '', 'HTTP/2')) {
+            $response->status = 500;
+            $refusal = 'Server Error';
+        }
+        if ($refusal !== null) {
+            echo '[Router] sendFile refused (' . $response->status . '): ' . $this->logSafe($path) . PHP_EOL;
+            $response->headers['Content-Type'] = 'text/plain; charset=utf-8';
+            $response->headers['Cache-Control'] = 'no-store';
+            $response->body = $isHead ? '' : $refusal;
+            return;
+        }
+        $response->status = $builder->statusCode;
+        foreach ($builder->headers as $name => $value) {
+            $response->headers[$name] = $value;
+        }
+        if (!$isHead) {
+            $response->filePath = $path;
+        }
+    }
+
     public function invoke()
     {
         $isHead = $this->httpContext->request->method === 'HEAD';
@@ -184,6 +219,8 @@ class RoutingMiddleware implements IMiddleware
                 $this->httpContext->response->headers[$name] = $value;
             }
             $this->httpContext->response->body = is_string($response->body) ? $response->body : json_encode($response->body);
+        } else if ($response instanceof ResponseBuilder && $response->filePath !== null) {
+            $this->fileResponse($response, $isHead);
         } else if ($response instanceof ResponseBuilder) {
             $this->httpContext->response->status = $response->statusCode;
             foreach ($response->headers as $name => $value) {

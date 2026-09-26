@@ -82,6 +82,12 @@ class BaseController
         return ResponseBuilder::File($content, $mimeType, $contentDisposition);
     }
 
+    /** A file on disk, streamed by the server (sendfile); see ResponseBuilder::sendFile. */
+    public function SendFile(string $path, string $mimeType, ?string $downloadName = null)
+    {
+        return ResponseBuilder::sendFile($path, $mimeType, $downloadName);
+    }
+
     public function Xml(string $data)
     {
         return ResponseBuilder::xml($data);

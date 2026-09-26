@@ -16,6 +16,16 @@ abstract class HttpRequest
     public abstract function getBody();
     public abstract function getCookie(?string $name = null);
     public abstract function getHeader(?string $name = null);
+
+    /**
+     * The raw query string exactly as the client sent it (no leading '?'), for code that must pass
+     * parameters on untouched: $query is PHP-parsed, which renames keys ("a.b" -> "a_b") and folds
+     * "x[]" into arrays. Adapters with the raw string override this; the fallback rebuilds it.
+     */
+    public function getQueryString(): string
+    {
+        return (string) ($this->server['query_string'] ?? http_build_query($this->query));
+    }
     /** Peers whose X-Real-IP is believed: our own reverse proxy, which runs on the same host. */
     private const TRUSTED_PROXIES = ['127.0.0.1', '::1', '::ffff:127.0.0.1'];
 

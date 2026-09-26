@@ -14,7 +14,15 @@ class SwooleHttpRequest extends HttpRequest
         array $query = array(),
         array $server = array(),
     ) {
-        parent::__construct($method, $uri, $headers, $query);
+        // $server was dropped here, leaving HttpRequest::$server empty: getIp() then read no
+        // remote_addr, defaulted to 127.0.0.1 and trusted X-Real-IP from any peer. Pass it on.
+        parent::__construct($method, $uri, $headers, $query, $server);
+    }
+
+    /** The raw query string exactly as sent (no leading '?'); '' when there is none. */
+    public function getQueryString(): string
+    {
+        return (string) ($this->swooleRequest->server['query_string'] ?? '');
     }
 
     public function getCookie(?string $name = null): mixed

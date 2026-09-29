@@ -41,6 +41,12 @@ switch ($inputs[0]) {
             break;
         }
     case 'build': {
+            // The Viewi build keeps every component's transpiled output in memory until it bundles.
+            // Urlicer's peaked at 126MB against the CLI default of 128M (2026-09-29), and a build
+            // that dies there leaves public/ pointing at a build id with no files.
+            if (ini_get('memory_limit') !== '-1') {
+                ini_set('memory_limit', '1G');
+            }
             // vendor autoload
             require $currentDir . '/vendor/autoload.php';
             require __DIR__ . '/Builder.php';

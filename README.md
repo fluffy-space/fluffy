@@ -1,8 +1,8 @@
 # fluffy
 
 An async PHP application framework built on [Swoole](https://swoole.com) and
-[Viewi](https://viewi.net) — one language for the server and the browser, with no Node in the
-build.
+[Viewi](https://viewi.net) - one language for the server and the browser. Viewi's build step uses
+Node, but a built app runs on PHP alone: no Node on the live server.
 
 ## What it gives you
 

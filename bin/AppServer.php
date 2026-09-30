@@ -355,7 +355,15 @@ class AppServer
         }
 
         [$class, $method, $params] = $task->data;
-        $this->app->task($class, $method, $params);
+        $result = $this->app->task($class, $method, $params);
+        // With task_enable_coroutine the return value is ignored: an answer reaches a waiting
+        // taskwait()/taskCo() (or a task callback) only through finish(). Reply when someone is
+        // waiting, which Swoole marks with COROUTINE or CALLBACK, or by leaving out NONBLOCK;
+        // a fire-and-forget task() (NONBLOCK alone) gets no reply, so no IPC round trip.
+        $flags = $task->flags;
+        if (!($flags & SWOOLE_TASK_NONBLOCK) || ($flags & (SWOOLE_TASK_CALLBACK | SWOOLE_TASK_COROUTINE))) {
+            $task->finish($result);
+        }
         return [];
     }
 

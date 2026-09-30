@@ -249,9 +249,10 @@ abstract class BaseApp
         }
     }
 
-    function task(string $class, string $method, array $params)
+    /** @return array{ok: bool, error: ?string} what runTask() reports, for a caller that waits. */
+    function task(string $class, string $method, array $params): array
     {
-        $this->runTask($class, $method, $params);
+        return $this->runTask($class, $method, $params);
     }
 
     /**

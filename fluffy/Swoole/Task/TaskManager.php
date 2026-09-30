@@ -106,6 +106,12 @@ class TaskManager
      * the cron path does; if that changes, the caller wants dispatchArray() and a callback instead.
      */
 
+    /**
+     * Run a task and wait for it: the task's {ok, error} outcome, or false on timeout (10 s).
+     * Inside a coroutine taskwait() is the coroutine form (like taskCo), so the worker keeps
+     * serving other requests meanwhile. Not from a task worker: Swoole forbids it there.
+     * @return array{ok: bool, error: ?string}|false
+     */
     public function dispatchArrayAndWait(array $action, ...$params)
     {
         [$class, $method] = $action;

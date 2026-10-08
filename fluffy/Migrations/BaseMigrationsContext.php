@@ -10,6 +10,7 @@ use Fluffy\Migrations\Auth\UserTokenDropTokenMigration;
 use Fluffy\Migrations\Auth\UserVerificationCodeHashMigration;
 use Fluffy\Migrations\Auth\UserVerificationCodeMigration;
 use Fluffy\Migrations\Auth\UserPermissionsMigration;
+use Fluffy\Migrations\Auth\UserIdentityMigration;
 use Fluffy\Migrations\InstallMigration;
 use Fluffy\Migrations\Settings\SettingMigration;
 
@@ -35,6 +36,7 @@ class BaseMigrationsContext implements IMigrationsContext
         $this->runMigration(UserVerificationCodeMigration::class);
         $this->runMigration(UserVerificationCodeHashMigration::class);
         $this->runMigration(SettingMigration::class);
+        $this->runMigration(UserIdentityMigration::class);
     }
 
     public function runMigration(string $type)

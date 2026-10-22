@@ -53,6 +53,18 @@ function group()
     return new ExpressionGroup();
 }
 
+/** `x(c('Col'), 'IS NULL')` by name: `->where(isNull(c('DeletedOn')))`. Repository arrays use Where::isNull(). */
+function isNull(Column $column): Expression
+{
+    return new Expression($column, 'IS NULL');
+}
+
+/** `x(c('Col'), 'IS NOT NULL')` by name. Repository arrays use Where::isNotNull(). */
+function isNotNull(Column $column): Expression
+{
+    return new Expression($column, 'IS NOT NULL');
+}
+
 
 
 // $user = from(User::class)

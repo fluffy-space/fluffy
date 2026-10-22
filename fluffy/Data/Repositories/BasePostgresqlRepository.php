@@ -8,6 +8,7 @@ use Fluffy\Data\Entities\BaseEntity;
 use Fluffy\Data\Entities\BaseEntityMap;
 use Fluffy\Data\Entities\CommonMap;
 use Fluffy\Data\Mapper\IMapper;
+use Fluffy\Data\Query\NullCondition;
 use ReflectionClass;
 use RuntimeException;
 use Swoole\Coroutine\PostgreSQL;
@@ -191,15 +192,31 @@ class BasePostgresqlRepository
         $wherePart = '';
         $whereGlue = '';
         foreach ($where as $condition) {
+            if ($condition instanceof NullCondition) {
+                // Where::isNull() / Where::isNotNull()
+                $wherePart .= $whereGlue . self::ident($condition->column) . ($condition->not ? ' IS NOT NULL' : ' IS NULL');
+                $whereGlue = " $concatOperator ";
+                continue;
+            }
             $column = $condition[0];
-            $orOperator = is_array($column);
+            // An OR group: a list whose items are conditions themselves (arrays or Where:: helpers).
+            $orOperator = is_array($column) || $column instanceof NullCondition;
             if ($orOperator) {
                 $total = count($condition);
                 $wherePart .= $whereGlue . ($total > 1 ? '(' : '') . $this->buildWhere($condition, 'OR') . ($total > 1 ? ')' : '');
             } else {
-                $hasOperator = isset($condition[2]);
-                $value = $this->buildValue($hasOperator ? $condition[2] : $condition[1]);
+                // array_key_exists, not isset: isset() is false for a null value, which read
+                // [column, 'IS', null] as [column, value: 'IS'].
+                $hasOperator = array_key_exists(2, $condition);
+                $rawValue = $hasOperator ? $condition[2] : $condition[1];
+                $value = $this->buildValue($rawValue);
                 $operator = $hasOperator ? $condition[1] : '=';
+                if ($rawValue === null && $operator === '=') {
+                    // "= NULL" is never true in SQL: [column, null] means IS NULL.
+                    $operator = 'IS';
+                } elseif ($rawValue === null && ($operator === '!=' || $operator === '<>')) {
+                    $operator = 'IS NOT';
+                }
 
                 $wherePart .= $whereGlue . self::ident($column) . " $operator $value";
             }

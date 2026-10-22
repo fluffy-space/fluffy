@@ -144,36 +144,32 @@ class Watcher
     {
         $events = inotify_read($this->watchStreamResource);
         $refresh = false;
+        // Every event of the batch is handled: a `mkdir -p a/b c/d` (or an editor writing several
+        // files) arrives as one batch, and stopping at the first event left the other new folders
+        // unwatched, so later edits inside them never rebuilt. One rebuild per batch either way:
+        // the timer below collapses them.
         foreach ($events as $event) {
-            if (isset($event['name']) && isset($event['wd'])) {
-                $wd = $event['wd'];
-                $name = $event['name'];
-                $path = $this->watchList[$wd] . DIRECTORY_SEPARATOR . $name;
-
-                if (isset($this->config['ignore'])) {
-                    $break = false;
-                    foreach ($this->config['ignore'] as $pattern) {
-                        $rootPattern = $this->baseDir . str_replace("@", '\@', $pattern);
-                        $match = preg_match("@$rootPattern@", $path);
-                        if ($match > 0) {
-                            // echo "[Watcher] Ignoring $path $pattern" . PHP_EOL;
-                            $break = true;
-                            break;
-                        }
-                    }
-                }
-                if ($break) {
-                    continue;
-                }
-                if (is_dir($path)) {
-                    $this->watchDirectory($path);
-                }
-                // print_r($events);
-                // print_r($this->config['ignore']);
-                echo "[Watcher] Changes detected: $path" . PHP_EOL;
-                $refresh = true;
-                break;
+            if (!isset($event['name'], $event['wd']) || !isset($this->watchList[$event['wd']])) {
+                continue;
             }
+            $path = $this->watchList[$event['wd']] . DIRECTORY_SEPARATOR . $event['name'];
+            $ignored = false;
+            foreach ($this->config['ignore'] ?? [] as $pattern) {
+                $rootPattern = $this->baseDir . str_replace("@", '\@', $pattern);
+                if (preg_match("@$rootPattern@", $path) > 0) {
+                    // echo "[Watcher] Ignoring $path $pattern" . PHP_EOL;
+                    $ignored = true;
+                    break;
+                }
+            }
+            if ($ignored) {
+                continue;
+            }
+            if (is_dir($path)) {
+                $this->watchDirectory($path);
+            }
+            echo "[Watcher] Changes detected: $path" . PHP_EOL;
+            $refresh = true;
         }
         if ($refresh && isset($this->config['onChange']) && is_callable($this->config['onChange'])) {
             if ($this->timerId && Swoole\Timer::exists($this->timerId)) {

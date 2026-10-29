@@ -54,7 +54,8 @@ class AuthorizationService
         protected UserRepository $users,
         protected UserTokenRepository $userTokens,
         protected UserVerificationCodeRepository $userVerifications,
-        protected ?IUserRegistrationHook $registrationHook = null
+        protected ?IUserRegistrationHook $registrationHook = null,
+        protected ?IRequestPrincipalResolver $principalResolver = null
     ) {
     }
 
@@ -297,7 +298,14 @@ class AuthorizationService
             $this->authorizeRequest();
         }
         if ($this->userToken === null) {
-            return null;
+            // No session cookie: an app-registered resolver may still name a principal (internal
+            // bearer keys). No impersonation on this path - the overlay is for cookie sessions.
+            $principal = $this->principalResolver?->resolve();
+            if ($principal !== null) {
+                $this->realUser = $principal;
+                $this->authorizedUser = $principal;
+            }
+            return $principal;
         }
         $realUser = $this->users->getById($this->userToken->UserId);
         // Revoke live sessions of a deactivated account: even with a valid,

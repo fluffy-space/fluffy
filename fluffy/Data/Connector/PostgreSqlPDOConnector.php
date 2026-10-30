@@ -104,6 +104,29 @@ class PostgreSqlPDOConnector implements IConnector, IDisposable
         return str_contains($message, 'another command is already in progress');
     }
 
+    /**
+     * bytea comes back from PDO as a stream, where the Swoole 5 client handed over the bytes. Read
+     * every stream into a string so an entity gets the same value on either driver - a typed
+     * `string` property refuses a resource, which is how attachments disappeared on Swoole 6.
+     */
+    private function readStreams(array $rows): array
+    {
+        foreach ($rows as &$row) {
+            if (is_resource($row)) {
+                $row = stream_get_contents($row);
+            } elseif (is_array($row)) {
+                foreach ($row as &$value) {
+                    if (is_resource($value)) {
+                        $value = stream_get_contents($value);
+                    }
+                }
+                unset($value);
+            }
+        }
+        unset($row);
+        return $rows;
+    }
+
     private function run(string $query, int $fetchMode): array
     {
         $pdo = $this->get();
@@ -116,7 +139,7 @@ class PostgreSqlPDOConnector implements IConnector, IDisposable
         // The server has executed the statement by now, even if fetching the rows fails below.
         $this->used = true;
         try {
-            return $this->lastStatement->fetchAll($fetchMode);
+            return $this->readStreams($this->lastStatement->fetchAll($fetchMode));
         } finally {
             // Release the RESULT here, not on the garbage collector's schedule — otherwise the
             // connection can go back into the pool with rows still pending and the next caller gets

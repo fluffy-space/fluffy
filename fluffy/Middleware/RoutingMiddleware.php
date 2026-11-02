@@ -182,6 +182,15 @@ class RoutingMiddleware implements IMiddleware
                 } else if ($argumentValue === null && $argument->isDefaultValueAvailable()) {
                     $argumentValue = $argument->getDefaultValue();
                 }
+                // A required argument nothing supplied: a POST with no body, or one that is not
+                // JSON. Scanners do this all day, and calling the action would be a TypeError, a
+                // 500 and a stack trace for a request that is simply wrong.
+                if ($argumentValue === null && !$argument->allowsNull()) {
+                    $this->httpContext->response->status = 400;
+                    $this->httpContext->response->headers['Content-Type'] = 'application/json';
+                    $this->httpContext->response->body = json_encode(['message' => 'Bad Request', 'errors' => ['The request is missing required data.']]);
+                    return;
+                }
                 $inputs[] = $argumentValue;
             }
             $response = $instance->$method(...$inputs);

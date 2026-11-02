@@ -5,6 +5,11 @@ namespace Fluffy\Domain\Message;
 class FpmHttpResponse extends HttpResponse
 {
 
+    public function canSetCookies(): bool
+    {
+        return false;
+    }
+
     public function setCookie(string $key, string $value = '', int $expire = 0, string $path = '/', string $domain = '', bool $secure = false, bool $httpOnly = false, string $sameSite = '', string $priority = ''): bool
     {
         return true;

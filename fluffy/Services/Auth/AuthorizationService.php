@@ -29,6 +29,9 @@ class AuthorizationService
     /** Fallback login-session lifetimes (seconds) when not set in config. */
     const REMEMBER_LIFETIME = 60 * 60 * 24 * 30; // 30 days (remember-me: persistent cookie)
     const SESSION_LIFETIME = 60 * 60 * 24;       // 1 day  (no remember-me: session cookie)
+    /** Fallback rotation settings: renew past half-life, old token good for a minute more. */
+    const RENEW_AFTER_FRACTION = 0.5;
+    const ROTATE_GRACE = 60;
 
     /**
      * Impersonation ("view as user") overlay cookie. Separate from AUTH: the
@@ -100,13 +103,6 @@ class AuthorizationService
                 $this->userToken = null;
                 return false;
             }
-            // TODO: session rotation (sliding expiry) — if $this->userToken is close
-            // to Expire, mint a fresh token (new Token/TokenHash + extended Expire),
-            // delete this one, and re-set the AUTH cookie so active users aren't
-            // logged out mid-use while idle sessions still lapse. Investigate best
-            // practices first (OWASP: periodic id renewal, sliding vs absolute
-            // timeout, reuse detection, concurrent-request races). Needs LastVisit
-            // to actually be updated per request. See backlog #39.
             return $this->userToken !== null;
         }
         return false;
@@ -217,26 +213,80 @@ class AuthorizationService
         $sessionLife = (int)($this->config->values['authSessionLifetime'] ?? self::SESSION_LIFETIME);
         $lifetime = $rememberMe ? $rememberLife : $sessionLife;
 
+        $token = $this->mintToken($user->Id, $lifetime);
+        $this->enforceSessionLimit($user->Id);
+        if ($setCookie) {
+            $this->setAuthCookie($token, $rememberMe ? time() + $rememberLife : 0);
+        }
+        return $token;
+    }
+
+    private function mintToken(int $userId, int $lifetime): UserTokenEntity
+    {
         $token = new UserTokenEntity();
-        $token->UserId = $user->Id;
+        $token->UserId = $userId;
         $token->Expire = time() + $lifetime;
         $token->LastVisit = UtilsService::GetMicroTime();
         $token->Token = UtilsService::randomHex(64);
         $token->TokenHash = $this->hashToken($token->Token);
         $this->userTokens->create($token);
-        $this->enforceSessionLimit($user->Id);
-        if ($setCookie) {
-            $integrityHash = hash('crc32', $token->Token . $token->UserId . $this->config->values['hashSalt']);
-            $authCookieValue = "{$token->Token}.{$token->UserId}.$integrityHash";
-            // expire 0 = session cookie (browser drops it on close); a future
-            // timestamp = persistent cookie that survives restarts (remember-me).
-            $cookieExpire = $rememberMe ? time() + $rememberLife : 0;
-            // SameSite=Lax: not sent on cross-site subrequests/POSTs (CSRF defence),
-            // but still sent on top-level navigation so following a link into the
-            // app (email/confirm/invite links) arrives authenticated.
-            $this->httpContext->response->setCookie(self::COOKIE_NAME, $authCookieValue, $cookieExpire, '/', '', 1, 1, 'Lax');
-        }
         return $token;
+    }
+
+    /** @return string the cookie value */
+    private function setAuthCookie(UserTokenEntity $token, int $cookieExpire): string
+    {
+        $integrityHash = hash('crc32', $token->Token . $token->UserId . $this->config->values['hashSalt']);
+        $authCookieValue = "{$token->Token}.{$token->UserId}.$integrityHash";
+        // expire 0 = session cookie (browser drops it on close); a future
+        // timestamp = persistent cookie that survives restarts (remember-me).
+        // SameSite=Lax: not sent on cross-site subrequests/POSTs (CSRF defence),
+        // but still sent on top-level navigation so following a link into the
+        // app (email/confirm/invite links) arrives authenticated.
+        $this->httpContext->response->setCookie(self::COOKIE_NAME, $authCookieValue, $cookieExpire, '/', '', 1, 1, 'Lax');
+        return $authCookieValue;
+    }
+
+    /**
+     * Keep an active session alive (#39, docs/session-rotation-plan.md): past a fraction of its
+     * life the token is swapped for a fresh one, so an idle session still lapses. Decided from the
+     * row already in hand, so the common case costs nothing; only a session crossing the threshold
+     * writes, about twice per lifetime however many requests it makes.
+     *
+     * The claim is atomic: a browser fires parallel requests with one cookie and only the first
+     * rotates. The old token gets a short grace rather than a delete, so those still in flight
+     * authenticate. The rest of its life is gone, which also means a token inside the grace is
+     * skipped here without a query - as is one first seen that close to its natural expiry.
+     *
+     * A response that cannot deliver a cookie must not rotate: an SSR page's internal API call
+     * would retire the token and lose its replacement, logging the user out a minute later. Such a
+     * session rotates on the browser's next API call.
+     */
+    private function maybeRotate(): void
+    {
+        $token = $this->userToken;
+        if ($token->Expire === null || $this->httpContext === null || !$this->httpContext->response->canSetCookies()) {
+            return;
+        }
+        $now = time();
+        $createdOn = (int) ($token->CreatedOn / 1000000);
+        $lifetime = $token->Expire - $createdOn;
+        $fraction = (float) ($this->config->values['authRenewAfterFraction'] ?? self::RENEW_AFTER_FRACTION);
+        $grace = (int) ($this->config->values['authRotateGrace'] ?? self::ROTATE_GRACE);
+        if ($now - $createdOn < $lifetime * $fraction || $token->Expire - $now <= $grace) {
+            return;
+        }
+        if (!$this->userTokens->claimRotation($token->Id, $now + $grace)) {
+            return;
+        }
+        // UserToken has no remember flag: the issued lifetime says which kind this was.
+        $rememberLife = (int) ($this->config->values['authRememberLifetime'] ?? self::REMEMBER_LIFETIME);
+        $sessionLife = (int) ($this->config->values['authSessionLifetime'] ?? self::SESSION_LIFETIME);
+        $rememberMe = $lifetime > ($rememberLife + $sessionLife) / 2;
+        $this->userToken = $this->mintToken($token->UserId, $rememberMe ? $rememberLife : $sessionLife);
+        $this->authToken = $this->userToken->Token;
+        // Later in this request logout() and friends must see the new token, not the retired one.
+        $this->authCookie = $this->setAuthCookie($this->userToken, $rememberMe ? $now + $rememberLife : 0);
     }
 
     /**
@@ -313,6 +363,7 @@ class AuthorizationService
             return null;
         }
         $this->realUser = $realUser;
+        $this->maybeRotate();
         // Single point of entry for impersonation: when a valid IMP cookie is in
         // effect the effective (authorized) user becomes the target, so everything
         // downstream (permissions, guards, Me) sees the impersonated user.

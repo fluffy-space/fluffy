@@ -21,6 +21,12 @@ abstract class HttpResponse
     public abstract function end();
     public abstract function setCookie(string $key, string $value = '', int $expire = 0, string $path = '/', string $domain  = '', bool $secure = false, bool $httpOnly = false, string $sameSite = '', string $priority = ''): bool;
     
+    /** Does a cookie set here reach the browser? Not from an SSR internal call or under FPM. */
+    public function canSetCookies(): bool
+    {
+        return true;
+    }
+
     public function getRawResponseData()
     {
         return $this->rawData ?? $this->body;

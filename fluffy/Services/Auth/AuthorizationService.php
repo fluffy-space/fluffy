@@ -246,11 +246,10 @@ class AuthorizationService
      * so logging in on a new device silently evicts the least-recent session and
      * accumulated stale/expired tokens are cleaned up. A limit <= 0 = unlimited.
      *
-     * NB: this only prunes users who log in. TODO: a cheap periodic GC sweep
-     * (DELETE FROM UserToken WHERE Expire < now) to reclaim expired tokens for
-     * dormant users who never log in again — pure row hygiene, not enforcement
-     * (expired tokens already grant nothing at the auth check). Fold into an
-     * existing cleanup cron if the table ever grows.
+     * NB: this only prunes users who log in. Expired tokens of dormant users who
+     * never log in again are the app's to sweep (a periodic DELETE WHERE Expire <
+     * now): pure row hygiene, not enforcement, as expired tokens already grant
+     * nothing at the auth check.
      */
     private function enforceSessionLimit(int $userId): void
     {

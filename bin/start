@@ -16,6 +16,17 @@ $params = array_slice($inputs, 1);
 
 switch ($inputs[0]) {
     case 'watch': {
+            // A plain `php fluffy watch` re-runs itself as `watch --logged` and copies everything
+            // the child prints, stderr included, to the terminal and to ~/<project folder>-watch.log
+            // (emptied on every start) - the same as `2>&1 | tee`, without typing it per project.
+            // `--onchange` is the watcher's own rebuild call and is never wrapped.
+            if (count($params) === 0) {
+                require __DIR__ . '/WatchLog.php';
+                exit(watchWithLog($currentDir, $argv[0]));
+            }
+            if ($params[0] === '--logged') {
+                $params = [];
+            }
             require __DIR__ . '/Watcher.php';
             $config = require $configDir . '/watch.php';
             $watcher = new Watcher($currentDir, $params, $config);

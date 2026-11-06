@@ -576,6 +576,13 @@ class AuthorizationService
         return $this->userTokens->deleteWhere($where);
     }
 
+    /** Sign the user out everywhere but this session, e.g. after turning on two-factor sign-in. */
+    public function revokeOtherSessions(int $userId): int
+    {
+        $keep = $this->userToken !== null && $this->userToken->UserId === $userId ? $this->userToken->TokenHash : null;
+        return $this->revokeSessions($userId, $keep);
+    }
+
     function hashToken(string $token): string
     {
         return hash('sha256', $token);

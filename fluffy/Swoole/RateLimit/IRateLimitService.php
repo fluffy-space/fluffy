@@ -16,6 +16,9 @@ interface IRateLimitService
     /**
      * Forget $key's open window, as if it had never been hit.
      *
+     * Also for a limit that counts only failures: count every attempt with limit() up front
+     * (atomic), then reset() after a success (two-factor sign-in does this).
+     *
      * For TESTS: a limiter is shared process state, so a suite that exercises a limited endpoint
      * poisons every later suite (and its own next run) for the rest of the window. Exposed through
      * the dev-only test facility, never on a production build.

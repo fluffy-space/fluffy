@@ -7,10 +7,13 @@ use Fluffy\Data\Entities\Auth\UserEntity;
 use Fluffy\Data\Entities\Auth\UserEntityMap;
 use Fluffy\Data\Entities\Auth\UserTokenEntity;
 use Fluffy\Data\Entities\Auth\UserTokenEntityMap;
+use Fluffy\Data\Entities\Auth\UserTwoFactorEntity;
+use Fluffy\Data\Entities\Auth\UserTwoFactorEntityMap;
 use Fluffy\Data\Entities\Auth\UserVerificationCodeEntity;
 use Fluffy\Data\Entities\Auth\UserVerificationCodeEntityMap;
 use Fluffy\Data\Repositories\UserRepository;
 use Fluffy\Data\Repositories\UserTokenRepository;
+use Fluffy\Data\Repositories\UserTwoFactorRepository;
 use Fluffy\Data\Repositories\UserVerificationCodeRepository;
 use Fluffy\Domain\Configuration\Config;
 use Fluffy\Domain\Message\HttpContext;
@@ -49,6 +52,8 @@ class AuthorizationService
     private ?UserEntity $realUser = null;
     /** Set to the acting admin's id while an impersonation cookie is in effect. */
     private ?int $impersonatorId = null;
+    /** This session's user may reach the admin area but has not turned on two-factor sign-in yet. */
+    private bool $twoFactorSetupRequired = false;
 
     public function __construct(
         protected SessionService $session,
@@ -58,7 +63,8 @@ class AuthorizationService
         protected UserTokenRepository $userTokens,
         protected UserVerificationCodeRepository $userVerifications,
         protected ?IUserRegistrationHook $registrationHook = null,
-        protected ?IRequestPrincipalResolver $principalResolver = null
+        protected ?IRequestPrincipalResolver $principalResolver = null,
+        protected ?UserTwoFactorRepository $twoFactors = null
     ) {
     }
 
@@ -110,17 +116,52 @@ class AuthorizationService
 
     public function authorizeAdminRequest(): bool
     {
-        $user = $this->getAuthorizedUser();
-        if ($user === null) {
-            return false;
-        }
-        return Permissions::can($user->Permissions, Capability::AccessAdmin);
+        return Permissions::can($this->permissions(), Capability::AccessAdmin);
     }
 
-    /** Effective permissions of the authorized user (0 when not authenticated). */
+    /**
+     * Effective permissions of the authorized user (0 when not authenticated). Also 0 for a
+     * session whose user may reach the admin area but has not turned on two-factor sign-in:
+     * every role and capability waits until they do (twoFactorSetupRequired()).
+     */
     public function permissions(): int
     {
-        return $this->getAuthorizedUser()?->Permissions ?? 0;
+        $user = $this->getAuthorizedUser();
+        if ($user === null || $this->twoFactorSetupRequired) {
+            return 0;
+        }
+        return $user->Permissions;
+    }
+
+    /**
+     * True for a signed-in session whose user has admin access but no two-factor sign-in yet:
+     * they get a member's access only, and the app sends them to turn it on. Never true for a
+     * bearer-key principal (no session, no sign-in to protect).
+     */
+    public function twoFactorSetupRequired(): bool
+    {
+        $this->getAuthorizedUser();
+        return $this->twoFactorSetupRequired;
+    }
+
+    /**
+     * Must this user keep two-factor sign-in on? Anyone who can reach the admin area, unless
+     * config `twoFactorRequiredForAdmins` is false (default true).
+     */
+    public function twoFactorRequiredFor(UserEntity $user): bool
+    {
+        return (bool) ($this->config->values['twoFactorRequiredForAdmins'] ?? true)
+            && Permissions::can($user->Permissions, Capability::AccessAdmin);
+    }
+
+    private function hasTwoFactor(int $userId): bool
+    {
+        if ($this->twoFactors === null) {
+            return true; // no 2FA storage wired in: nothing to require
+        }
+        /** @var UserTwoFactorEntity|null $record */
+        $record = $this->twoFactors->find(UserTwoFactorEntityMap::PROPERTY_UserId, $userId);
+        return $record !== null && $record->EnabledOn !== null;
     }
 
     /** Does the authorized user have the given capability (see Fluffy\Security\Capability)? */
@@ -137,7 +178,7 @@ class AuthorizationService
      */
     public function authorizeAdminCapability(int $capability): bool
     {
-        $permissions = $this->permissions();
+        $permissions = $this->permissions(); // 0 until an admin turns on two-factor sign-in
         return Permissions::can($permissions, Capability::AccessAdmin)
             && Permissions::can($permissions, $capability);
     }
@@ -363,6 +404,7 @@ class AuthorizationService
             return null;
         }
         $this->realUser = $realUser;
+        $this->twoFactorSetupRequired = $this->twoFactorRequiredFor($realUser) && !$this->hasTwoFactor($realUser->Id);
         $this->maybeRotate();
         // Single point of entry for impersonation: when a valid IMP cookie is in
         // effect the effective (authorized) user becomes the target, so everything
@@ -395,7 +437,7 @@ class AuthorizationService
         if ($targetId <= 0 || $targetId === $realUser->Id) {
             return null;
         }
-        if (!Permissions::hasRole($realUser->Permissions, Role::SuperAdmin)) {
+        if (!Permissions::hasRole($realUser->Permissions, Role::SuperAdmin) || $this->twoFactorSetupRequired) {
             return null;
         }
         return $this->users->getById($targetId);

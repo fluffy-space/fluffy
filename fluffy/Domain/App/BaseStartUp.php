@@ -35,6 +35,7 @@ use Fluffy\Data\Repositories\UserIdentityRepository;
 use Fluffy\Data\Repositories\UserRecoveryCodeRepository;
 use Fluffy\Data\Repositories\UserTwoFactorRepository;
 use Fluffy\Services\Auth\TotpService;
+use Fluffy\Services\Auth\TwoFactorService;
 use Fluffy\Services\Security\SecretCipher;
 use Fluffy\Data\Repositories\UserVerificationCodeRepository;
 use Fluffy\Data\Repositories\SettingRepository;
@@ -187,6 +188,7 @@ class BaseStartUp implements IStartUp
         $serviceProvider->addScoped(UserRecoveryCodeRepository::class);
         $serviceProvider->addSingleton(TotpService::class);
         $serviceProvider->addSingleton(SecretCipher::class);
+        $serviceProvider->addScoped(TwoFactorService::class);
         $serviceProvider->addScoped(SettingRepository::class);
         $serviceProvider->addScoped(SettingsService::class);
         // Register the framework's default role -> capability grants (apps extend these).

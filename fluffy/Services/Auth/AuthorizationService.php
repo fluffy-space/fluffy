@@ -40,6 +40,12 @@ class AuthorizationService
     const SSO_ROTATE_INTERVAL = 60 * 60 * 24;
     /** SSO sessions: ask ISessionRenewer this many seconds before SsoCheckDue. */
     const SSO_RENEW_LEAD = 600;
+    /**
+     * SSO sessions: the cookie outlives the session by this much, so a request after the end still
+     * shows the app "this browser's SSO session ended" (it goes round the provider again by
+     * itself) rather than "nobody signed in here". An ended token grants nothing either way.
+     */
+    const SSO_COOKIE_GRACE = 86400;
 
     /**
      * Impersonation ("view as user") overlay cookie. Separate from AUTH: the
@@ -286,7 +292,8 @@ class AuthorizationService
         $token = $this->mintToken($user->Id, $options->lifetime, $options->ssoConnectionId, $options->ssoCheckDue);
         $this->enforceSessionLimit($user->Id);
         if ($setCookie) {
-            $this->setAuthCookie($token, $options->persistent ? $token->Expire : 0);
+            $cookieExpire = $options->persistent ? $token->Expire + ($options->ssoConnectionId !== null ? self::SSO_COOKIE_GRACE : 0) : 0;
+            $this->setAuthCookie($token, $cookieExpire);
         }
         return $token;
     }
@@ -392,7 +399,7 @@ class AuthorizationService
         $this->sessionRenewer?->rotated($token, $fresh);
         $this->userToken = $fresh;
         $this->authToken = $fresh->Token;
-        $this->authCookie = $this->setAuthCookie($fresh, $fresh->Expire);
+        $this->authCookie = $this->setAuthCookie($fresh, $fresh->Expire + self::SSO_COOKIE_GRACE);
     }
 
     /**

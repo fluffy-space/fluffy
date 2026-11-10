@@ -10,6 +10,8 @@ class UserTokenEntityMap extends BaseEntityMap
     public const PROPERTY_UserId = 'UserId';
     public const PROPERTY_TokenHash = 'TokenHash';
     public const PROPERTY_Expire = 'Expire';
+    public const PROPERTY_SsoConnectionId = 'SsoConnectionId';
+    public const PROPERTY_SsoCheckDue = 'SsoCheckDue';
 
     public static string $Table = 'UserToken';
     public static array $Indexes = [
@@ -34,6 +36,9 @@ class UserTokenEntityMap extends BaseEntityMap
             'TokenHash' => CommonMap::$VarChar255,
             'Expire' => CommonMap::$IntNull,
             'LastVisit' => CommonMap::$BigIntNull,
+            // SSO sessions only (UserTokenSsoMigration); NULL for everyone else.
+            'SsoConnectionId' => CommonMap::$BigIntNull,
+            'SsoCheckDue' => CommonMap::$IntNull,
 
             'CreatedOn' => CommonMap::$MicroDateTime,
             'CreatedBy' => CommonMap::$VarChar255Null,

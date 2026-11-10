@@ -19,6 +19,7 @@ use Fluffy\Domain\Configuration\Config;
 use Fluffy\Domain\Message\HttpContext;
 use Fluffy\Models\Auth\AuthResult;
 use Fluffy\Models\Auth\RegisterResult;
+use Fluffy\Models\Auth\SessionOptions;
 use Fluffy\Security\Capability;
 use Fluffy\Security\Permissions;
 use Fluffy\Security\Role;
@@ -35,6 +36,10 @@ class AuthorizationService
     /** Fallback rotation settings: renew past half-life, old token good for a minute more. */
     const RENEW_AFTER_FRACTION = 0.5;
     const ROTATE_GRACE = 60;
+    /** SSO sessions: swap the token value once a day (they keep their end; see maybeRotateSso). */
+    const SSO_ROTATE_INTERVAL = 60 * 60 * 24;
+    /** SSO sessions: ask ISessionRenewer this many seconds before SsoCheckDue. */
+    const SSO_RENEW_LEAD = 600;
 
     /**
      * Impersonation ("view as user") overlay cookie. Separate from AUTH: the
@@ -64,7 +69,8 @@ class AuthorizationService
         protected UserVerificationCodeRepository $userVerifications,
         protected ?IUserRegistrationHook $registrationHook = null,
         protected ?IRequestPrincipalResolver $principalResolver = null,
-        protected ?UserTwoFactorRepository $twoFactors = null
+        protected ?UserTwoFactorRepository $twoFactors = null,
+        protected ?ISessionRenewer $sessionRenewer = null
     ) {
     }
 
@@ -239,6 +245,25 @@ class AuthorizationService
 
     public function authorizeUser(UserEntity $user, bool $rememberMe = false, bool $setCookie = true): ?UserTokenEntity
     {
+        // Remember-me → a long-lived, persistent cookie; otherwise a shorter
+        // server-side token life and a session cookie (dropped on browser close).
+        $rememberLife = (int)($this->config->values['authRememberLifetime'] ?? self::REMEMBER_LIFETIME);
+        $sessionLife = (int)($this->config->values['authSessionLifetime'] ?? self::SESSION_LIFETIME);
+        return $this->signIn($user, new SessionOptions($rememberMe ? $rememberLife : $sessionLife, $rememberMe), $setCookie);
+    }
+
+    /**
+     * Sign in with a session shaped by the caller instead of the remember-me rule: an
+     * organisation's sign-in (SSO) sets its length, its connection and when the provider must next
+     * confirm it. The token keeps those through rotation (maybeRotateSso).
+     */
+    public function authorizeUserWith(UserEntity $user, SessionOptions $options, bool $setCookie = true): ?UserTokenEntity
+    {
+        return $this->signIn($user, $options, $setCookie);
+    }
+
+    private function signIn(UserEntity $user, SessionOptions $options, bool $setCookie): UserTokenEntity
+    {
         // Re-login from a context that already holds a valid AUTH token: the new
         // cookie set below replaces it, so that old token is abandoned — it can
         // never be presented again from this client. Delete it, so signing in
@@ -248,25 +273,21 @@ class AuthorizationService
             $this->userTokens->delete($this->userToken);
             $this->userToken = null;
         }
-        // Remember-me → a long-lived, persistent cookie; otherwise a shorter
-        // server-side token life and a session cookie (dropped on browser close).
-        $rememberLife = (int)($this->config->values['authRememberLifetime'] ?? self::REMEMBER_LIFETIME);
-        $sessionLife = (int)($this->config->values['authSessionLifetime'] ?? self::SESSION_LIFETIME);
-        $lifetime = $rememberMe ? $rememberLife : $sessionLife;
-
-        $token = $this->mintToken($user->Id, $lifetime);
+        $token = $this->mintToken($user->Id, $options->lifetime, $options->ssoConnectionId, $options->ssoCheckDue);
         $this->enforceSessionLimit($user->Id);
         if ($setCookie) {
-            $this->setAuthCookie($token, $rememberMe ? time() + $rememberLife : 0);
+            $this->setAuthCookie($token, $options->persistent ? $token->Expire : 0);
         }
         return $token;
     }
 
-    private function mintToken(int $userId, int $lifetime): UserTokenEntity
+    private function mintToken(int $userId, int $lifetime, ?int $ssoConnectionId = null, ?int $ssoCheckDue = null): UserTokenEntity
     {
         $token = new UserTokenEntity();
         $token->UserId = $userId;
         $token->Expire = time() + $lifetime;
+        $token->SsoConnectionId = $ssoConnectionId;
+        $token->SsoCheckDue = $ssoCheckDue;
         $token->LastVisit = UtilsService::GetMicroTime();
         $token->Token = UtilsService::randomHex(64);
         $token->TokenHash = $this->hashToken($token->Token);
@@ -309,6 +330,10 @@ class AuthorizationService
         if ($token->Expire === null || $this->httpContext === null || !$this->httpContext->response->canSetCookies()) {
             return;
         }
+        if ($token->SsoConnectionId !== null) {
+            $this->maybeRotateSso($token);
+            return;
+        }
         $now = time();
         $createdOn = (int) ($token->CreatedOn / 1000000);
         $lifetime = $token->Expire - $createdOn;
@@ -328,6 +353,62 @@ class AuthorizationService
         $this->authToken = $this->userToken->Token;
         // Later in this request logout() and friends must see the new token, not the retired one.
         $this->authCookie = $this->setAuthCookie($this->userToken, $rememberMe ? $now + $rememberLife : 0);
+    }
+
+    /**
+     * Rotation for an SSO session. It differs from maybeRotate() in three ways, all so the session
+     * ends when its connection says, however active it is:
+     * - on a fixed interval (`authSsoRotateInterval`, a day) instead of a fraction of the lifetime,
+     *   which with a kept end would rotate ever more often as the end nears;
+     * - the new token keeps the old one's Expire, connection and SsoCheckDue, never a fresh life;
+     * - the cookie expires with the session, instead of the remember-me guess from the lifetime
+     *   (that guess would make a 7-day SSO cookie a browser-session cookie after one rotation).
+     * Whatever the app keys by the token id (the refresh grant) moves through ISessionRenewer.
+     */
+    private function maybeRotateSso(UserTokenEntity $token): void
+    {
+        $now = time();
+        $createdOn = (int) ($token->CreatedOn / 1000000);
+        $interval = (int) ($this->config->values['authSsoRotateInterval'] ?? self::SSO_ROTATE_INTERVAL);
+        $grace = (int) ($this->config->values['authRotateGrace'] ?? self::ROTATE_GRACE);
+        if ($now - $createdOn < $interval || $token->Expire - $now <= $grace) {
+            return;
+        }
+        $expire = $token->Expire;
+        if (!$this->userTokens->claimRotation($token->Id, $now + $grace)) {
+            return;
+        }
+        $fresh = $this->mintToken($token->UserId, $expire - $now, $token->SsoConnectionId, $token->SsoCheckDue);
+        $this->sessionRenewer?->rotated($token, $fresh);
+        $this->userToken = $fresh;
+        $this->authToken = $fresh->Token;
+        $this->authCookie = $this->setAuthCookie($fresh, $fresh->Expire);
+    }
+
+    /**
+     * An SSO session near or past its provider check: ask the app's ISessionRenewer. False = the
+     * session is over (token deleted). Sessions without SsoCheckDue never get here; with no renewer
+     * registered a due session ends, since nothing can confirm it.
+     */
+    private function renewIfDue(): bool
+    {
+        $token = $this->userToken;
+        if ($token === null || $token->SsoConnectionId === null || $token->SsoCheckDue === null) {
+            return true;
+        }
+        $now = time();
+        $lead = (int) ($this->config->values['authSsoRenewLead'] ?? self::SSO_RENEW_LEAD);
+        if ($now < $token->SsoCheckDue - $lead) {
+            return true;
+        }
+        $due = $now >= $token->SsoCheckDue;
+        $alive = $this->sessionRenewer !== null ? $this->sessionRenewer->renew($token, $due) : !$due;
+        if (!$alive) {
+            $this->userTokens->delete($token);
+            $this->userToken = null;
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -379,6 +460,18 @@ class AuthorizationService
         return $this->session->startSession();
     }
 
+    /**
+     * The session row behind this request's AUTH cookie, or null. While impersonating it is still
+     * the admin's own token (impersonation changes the user, not the session).
+     */
+    public function currentToken(): ?UserTokenEntity
+    {
+        if ($this->userToken === null) {
+            $this->authorizeRequest();
+        }
+        return $this->userToken;
+    }
+
     public function getAuthorizedUser(): ?UserEntity
     {
         if ($this->authorizedUser !== null) {
@@ -401,6 +494,9 @@ class AuthorizationService
         // Revoke live sessions of a deactivated account: even with a valid,
         // unexpired token the request is treated as unauthenticated.
         if ($realUser === null || $this->isDeactivated($realUser)) {
+            return null;
+        }
+        if (!$this->renewIfDue()) {
             return null;
         }
         $this->realUser = $realUser;

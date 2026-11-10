@@ -2,6 +2,7 @@
 
 namespace Fluffy\Services\Auth;
 
+use Fluffy\Models\Auth\SessionOptions;
 use Fluffy\Data\Entities\Auth\UserEntity;
 use Fluffy\Data\Entities\Auth\UserRecoveryCodeEntity;
 use Fluffy\Data\Entities\Auth\UserRecoveryCodeEntityMap;
@@ -51,7 +52,8 @@ class TwoFactorService
         private AuthorizationService $auth,
         private TotpService $totp,
         private SecretCipher $cipher,
-        private IRateLimitService $rateLimit
+        private IRateLimitService $rateLimit,
+        private ?ISessionRenewer $sessionRenewer = null
     ) {}
 
     /** True when the user finished setting up two-factor sign-in, so sign-in must ask for a code. */
@@ -60,18 +62,30 @@ class TwoFactorService
         return $this->enabledRecord($user->Id) !== null;
     }
 
-    /** First factor passed: hold the sign-in until the code arrives. */
-    public function startChallenge(UserEntity $user, bool $rememberMe): void
+    /**
+     * First factor passed: hold the sign-in until the code arrives.
+     *
+     * $session: the session an organisation's sign-in (SSO) asked for, made instead of the
+     * remember-me one once the code is right. $reference: what the app parked for that session (its
+     * refresh grant), handed to ISessionRenewer::adopt() with the new token. Both travel in the
+     * signed challenge cookie; the reference is an opaque id, never the credential itself.
+     */
+    public function startChallenge(UserEntity $user, bool $rememberMe, ?SessionOptions $session = null, ?string $reference = null): void
     {
         if ($this->httpContext === null) {
             return;
         }
-        $payload = rtrim(strtr(base64_encode(json_encode([
+        $challenge = [
             'u' => $user->Id,
             'm' => $rememberMe ? 1 : 0,
             'e' => time() + self::CHALLENGE_LIFETIME,
             'p' => $this->passwordMark($user),
-        ])), '+/', '-_'), '=');
+        ];
+        if ($session !== null) {
+            $challenge['s'] = [$session->lifetime, $session->persistent ? 1 : 0, $session->ssoConnectionId, $session->ssoCheckDue];
+            $challenge['x'] = $reference;
+        }
+        $payload = rtrim(strtr(base64_encode(json_encode($challenge)), '+/', '-_'), '=');
         $this->httpContext->response->setCookie(self::COOKIE_NAME, $payload . '.' . $this->sign($payload), time() + self::CHALLENGE_LIFETIME, self::COOKIE_PATH, '', 1, 1, 'Lax');
     }
 
@@ -96,7 +110,7 @@ class TwoFactorService
         if ($record === null) {
             // 2FA was turned off in between: the first factor was all this account needs.
             $this->clearChallenge();
-            $this->auth->authorizeUser($user, (bool) $challenge['m']);
+            $this->signIn($user, $challenge);
             return self::RESULT_OK;
         }
         $result = $this->limited($user->Id, fn() => $this->checkTotp($record, $code) || $this->useRecoveryCode($user->Id, $code));
@@ -104,8 +118,24 @@ class TwoFactorService
             return $result;
         }
         $this->clearChallenge();
-        $this->auth->authorizeUser($user, (bool) $challenge['m']);
+        $this->signIn($user, $challenge);
         return self::RESULT_OK;
+    }
+
+    /** The session the first step asked for: the SSO one it carried, or the remember-me one. */
+    private function signIn(UserEntity $user, array $challenge): void
+    {
+        $s = $challenge['s'] ?? null;
+        if (!is_array($s) || count($s) !== 4) {
+            $this->auth->authorizeUser($user, (bool) $challenge['m']);
+            return;
+        }
+        // The end is counted from the first step, so waiting at the code does not extend it.
+        $token = $this->auth->authorizeUserWith($user, new SessionOptions((int) $s[0], (bool) $s[1], $s[2] === null ? null : (int) $s[2], $s[3] === null ? null : (int) $s[3]));
+        $reference = $challenge['x'] ?? null;
+        if ($token !== null && is_string($reference) && $reference !== '') {
+            $this->sessionRenewer?->adopt($token, $reference);
+        }
     }
 
     /** sha256 hex of a recovery code as people type it: case, spaces and dashes do not matter. */

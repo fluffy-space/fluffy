@@ -29,4 +29,10 @@ interface ISessionRenewer
 
     /** Rotation replaced $old with $new: move whatever is keyed by the old token's id. */
     public function rotated(UserTokenEntity $old, UserTokenEntity $new): void;
+
+    /**
+     * A session made after a held sign-in (the two-factor code step): bind to $token what the app
+     * parked under $reference when the sign-in started (TwoFactorService::startChallenge).
+     */
+    public function adopt(UserTokenEntity $token, string $reference): void;
 }

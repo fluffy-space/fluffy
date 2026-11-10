@@ -70,7 +70,8 @@ class AuthorizationService
         protected ?IUserRegistrationHook $registrationHook = null,
         protected ?IRequestPrincipalResolver $principalResolver = null,
         protected ?UserTwoFactorRepository $twoFactors = null,
-        protected ?ISessionRenewer $sessionRenewer = null
+        protected ?ISessionRenewer $sessionRenewer = null,
+        protected ?ISignInPolicy $signInPolicy = null
     ) {
     }
 
@@ -222,6 +223,9 @@ class AuthorizationService
                 // not log in. Unconfirmed users are mid-signup, not deactivated.
                 if ($this->isDeactivated($user)) {
                     $result->Disabled = true;
+                } else if (($refusal = $this->signInRefusal($user, ISignInPolicy::METHOD_PASSWORD)) !== null) {
+                    // A correct password, but this account must sign in another way (SSO).
+                    $result->Refused = $refusal;
                 } else {
                     $result->Success = true;
                 }
@@ -238,6 +242,12 @@ class AuthorizationService
      * (created Active=false, granted a one-time register auto-login until they
      * confirm), not disabled.
      */
+    /** Must $user sign in some other way than $method? The app's ISignInPolicy decides; null = allowed. */
+    public function signInRefusal(UserEntity $user, string $method): ?string
+    {
+        return $this->signInPolicy?->refusal($user, $method);
+    }
+
     public function isDeactivated(UserEntity $user): bool
     {
         return !$user->Active && $user->EmailConfirmed;

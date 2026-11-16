@@ -16,6 +16,7 @@ class UserEntityMap extends BaseEntityMap
     public const PROPERTY_EmailConfirmed = 'EmailConfirmed';
     public const PROPERTY_Password = 'Password';
     public const PROPERTY_Permissions = 'Permissions';
+    public const PROPERTY_TimeZone = 'TimeZone';
 
     public static string $Table = 'User';
 
@@ -47,6 +48,7 @@ class UserEntityMap extends BaseEntityMap
             'Active' => CommonMap::$Boolean,
             'EmailConfirmed' => CommonMap::$Boolean,
             'Permissions' => CommonMap::$BigIntDefault0,
+            'TimeZone' => CommonMap::VarChar(64, true),
             'CreatedOn' => CommonMap::$MicroDateTime,
             'CreatedBy' => CommonMap::$VarChar255Null,
             'UpdatedOn' => CommonMap::$MicroDateTime,

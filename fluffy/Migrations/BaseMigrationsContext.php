@@ -12,6 +12,7 @@ use Fluffy\Migrations\Auth\UserVerificationCodeMigration;
 use Fluffy\Migrations\Auth\UserPermissionsMigration;
 use Fluffy\Migrations\Auth\UserIdentityMigration;
 use Fluffy\Migrations\Auth\UserTwoFactorMigration;
+use Fluffy\Migrations\Auth\UserTimeZoneMigration;
 use Fluffy\Migrations\Auth\UserTokenSsoMigration;
 use Fluffy\Migrations\InstallMigration;
 use Fluffy\Migrations\Settings\SettingMigration;
@@ -41,6 +42,7 @@ class BaseMigrationsContext implements IMigrationsContext
         $this->runMigration(UserIdentityMigration::class);
         $this->runMigration(UserTwoFactorMigration::class);
         $this->runMigration(UserTokenSsoMigration::class);
+        $this->runMigration(UserTimeZoneMigration::class);
     }
 
     public function runMigration(string $type)

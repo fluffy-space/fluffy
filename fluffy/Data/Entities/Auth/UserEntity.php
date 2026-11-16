@@ -20,4 +20,9 @@ class UserEntity extends BaseEntity
      * See Application\Security\Permissions for the bit layout and role->capability map.
      */
     public int $Permissions = 0;
+    /**
+     * IANA time zone the person reads dates in (for example Europe/Kyiv). NULL until they or their
+     * browser set one; readers treat NULL as UTC. Stored timestamps stay UTC either way.
+     */
+    public ?string $TimeZone = null;
 }

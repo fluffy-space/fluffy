@@ -6,7 +6,11 @@ use DotDi\Interfaces\IDisposable;
 use Fluffy\Domain\Configuration\Config;
 use Fluffy\Swoole\Database\IClickHousePool;
 use RuntimeException;
+use Swoole\Coroutine;
+use Swoole\Coroutine\Channel;
 use Swoole\Coroutine\Http\Client;
+use Swoole\Coroutine\WaitGroup;
+use Throwable;
 
 /**
  * Scoped (per-request) ClickHouse connector over the HTTP interface. Borrows a keep-alive
@@ -24,12 +28,98 @@ class ClickHouseConnector implements IClickHouseConnector, IDisposable
     /** Set between beginSession() and endSession(): every request carries it (see beginSession). */
     private ?string $sessionId = null;
     private int $sessionTimeout = 60;
+    /** Inside parallel(): the coroutine that called it keeps $client; each task coroutine gets its own. */
+    private ?int $ownerCid = null;
+    /** @var array<int, Client> task coroutine id => its borrowed client */
+    private array $taskClients = [];
+    /** @var array<int, bool> task coroutine id => its client hit a transport error */
+    private array $taskBroken = [];
+
+    /** At most this many queries of one parallel() at once, so one report never takes the whole pool. */
+    const PARALLEL_LIMIT = 4;
 
     public function __construct(private IClickHousePool $pool, private Config $config) {}
 
     private function get(): Client
     {
+        $cid = $this->taskCid();
+        if ($cid !== null) {
+            return $this->taskClients[$cid] ??= $this->pool->get();
+        }
         return $this->client ??= $this->pool->get();
+    }
+
+    /** The current coroutine id when it is a parallel() task, null otherwise. */
+    private function taskCid(): ?int
+    {
+        if ($this->ownerCid === null) {
+            return null;
+        }
+        $cid = Coroutine::getCid();
+        return $cid !== $this->ownerCid ? $cid : null;
+    }
+
+    /**
+     * Run independent read callables concurrently, each on its own pooled connection, at most
+     * PARALLEL_LIMIT at a time; returns their results under the same keys. A report of many small
+     * queries then takes about as long as its slowest query instead of the sum of all of them.
+     *
+     * Falls back to running them in order when there is nothing to gain or it would be wrong:
+     * outside a coroutine, inside a session (ClickHouse runs one query at a time per session, and
+     * a session's temporary tables live on it), or for a single task. The callables must only use
+     * this connector for ClickHouse and must not call parallel() themselves. The first task error
+     * is rethrown after every task has finished and returned its connection.
+     *
+     * @param array<string|int, callable(): mixed> $tasks
+     * @return array<string|int, mixed>
+     */
+    public function parallel(array $tasks): array
+    {
+        if (count($tasks) < 2 || $this->sessionId !== null || $this->ownerCid !== null || Coroutine::getCid() < 0) {
+            $results = [];
+            foreach ($tasks as $key => $task) {
+                $results[$key] = $task();
+            }
+            return $results;
+        }
+        $this->ownerCid = Coroutine::getCid();
+        $results = [];
+        $errors = [];
+        $slots = new Channel(self::PARALLEL_LIMIT);
+        $group = new WaitGroup();
+        try {
+            foreach ($tasks as $key => $task) {
+                $slots->push(true); // waits while PARALLEL_LIMIT tasks are running
+                $group->add();
+                Coroutine::create(function () use ($key, $task, &$results, &$errors, $slots, $group) {
+                    $cid = Coroutine::getCid();
+                    try {
+                        $results[$key] = $task();
+                    } catch (Throwable $e) {
+                        $errors[$key] = $e;
+                    } finally {
+                        if (isset($this->taskClients[$cid])) {
+                            $this->pool->put(!empty($this->taskBroken[$cid]) ? null : $this->taskClients[$cid]);
+                        }
+                        unset($this->taskClients[$cid], $this->taskBroken[$cid]);
+                        $slots->pop();
+                        $group->done();
+                    }
+                });
+            }
+            $group->wait();
+        } finally {
+            $this->ownerCid = null;
+        }
+        if ($errors !== []) {
+            throw reset($errors);
+        }
+        // Same order as the tasks, whatever order they finished in.
+        $ordered = [];
+        foreach (array_keys($tasks) as $key) {
+            $ordered[$key] = $results[$key] ?? null;
+        }
+        return $ordered;
     }
 
     public function execute(string $sql, array $params = [], array $settings = []): string
@@ -57,7 +147,12 @@ class ClickHouseConnector implements IClickHouseConnector, IDisposable
 
         // Transport failure -> connection unusable, must not return to pool.
         if ($client->errCode !== 0 || $client->statusCode < 0) {
-            $this->broken = true;
+            $taskCid = $this->taskCid();
+            if ($taskCid !== null) {
+                $this->taskBroken[$taskCid] = true;
+            } else {
+                $this->broken = true;
+            }
             throw new RuntimeException("ClickHouse transport error: {$client->errMsg} ({$client->errCode})");
         }
         // Application error -> socket still fine (keep-alive), surface the CH message.

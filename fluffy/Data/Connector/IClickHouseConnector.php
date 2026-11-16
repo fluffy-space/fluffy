@@ -31,4 +31,10 @@ interface IClickHouseConnector
     function escapeLiteral($value): string;
 
     function getPool(): IClickHousePool;
+
+    /**
+     * Run independent read callables concurrently on separate pooled connections (bounded); in order
+     * when not in a coroutine or inside a session. @param array<string|int, callable(): mixed> $tasks
+     */
+    function parallel(array $tasks): array;
 }

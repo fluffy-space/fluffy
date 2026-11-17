@@ -47,7 +47,10 @@ class TaskManager
      */
     private const LOG_RUNS_INTERVAL_SEC = 3600;
 
-    public function __construct(private \AppServer $appServer)
+    /** Tries per task before an abandoned one is given up (it is logged when that happens). */
+    public const MAX_ATTEMPTS = 3;
+
+    public function __construct(private \AppServer $appServer, private ?ITaskJournal $journal = null)
     {
         $this->workerId = $appServer->server->worker_id;
         $this->uniqueId = $appServer->uniqueId;
@@ -67,13 +70,83 @@ class TaskManager
      * the route there differs. If the round-robin picks this very worker, sendToWorker() runs it
      * inline, which is still the same scope the task pool would have given it.
      */
-    private function queueTask(array $payload): void
+    private function queueTask(array $payload, int $attempt = 1, ?string $journalId = null): void
     {
+        // Written down first (#4): a task lives in this worker's memory until a task worker runs it,
+        // and a reload, crash or stop in between used to be the end of it - a password reset email,
+        // a Paddle event, a certificate. requeueAbandoned() picks up what never got crossed off.
+        $payload['j'] = $journalId ?? $this->journalBegin($payload, $attempt);
         if ($this->appServer->server->taskworker) {
             $this->sendToWorker(new TaskMessage($this->uniqueId, $payload));
             return;
         }
-        $this->appServer->server->task($payload);
+        if ($this->appServer->server->task($payload) === false) {
+            // Swoole refused it (the task queue is full or the server is shutting down). The journal
+            // entry stays, so it runs later instead of never.
+            echo '[Task] ' . date('Y-m-d H:i:s') . " could not queue {$payload[0]}::{$payload[1]}"
+                . ($payload['j'] !== null ? '; it will be retried.' : '.') . PHP_EOL;
+        }
+    }
+
+    private function journalBegin(array $payload, int $attempt): ?string
+    {
+        if ($this->journal === null) {
+            return null;
+        }
+        try {
+            return $this->journal->begin([$payload[0], $payload[1], $payload[2]], $attempt);
+        } catch (\Throwable $t) {
+            // Never block the work on its bookkeeping: it runs, just without the safety net.
+            echo '[Task] journal unavailable: ' . $t->getMessage() . PHP_EOL;
+            return null;
+        }
+    }
+
+    /**
+     * Run a queued [class, method, params] payload and cross it off the journal, whatever the
+     * outcome: a task that threw would only throw again. Both ways into a task worker end here.
+     * @return array{ok: bool, error: ?string}
+     */
+    public function runQueued(array $payload): array
+    {
+        [$class, $method, $params] = $payload;
+        $result = $this->appServer->app->task($class, $method, $params);
+        if (($payload['j'] ?? null) !== null && $this->journal !== null) {
+            try {
+                $this->journal->done($payload['j']);
+            } catch (\Throwable $t) {
+                echo '[Task] journal unavailable: ' . $t->getMessage() . PHP_EOL;
+            }
+        }
+        return $result;
+    }
+
+    /**
+     * Queue again the tasks a dead worker took with it: noted more than $olderThan seconds ago and
+     * never run. Each goes back with its attempt count; past MAX_ATTEMPTS it is dropped and logged.
+     * $olderThan must be longer than any task takes, or a slow one would run twice.
+     * @return int tasks queued again
+     */
+    public function requeueAbandoned(int $olderThan, int $limit = 100): int
+    {
+        if ($this->journal === null) {
+            return 0;
+        }
+        $requeued = 0;
+        foreach ($this->journal->takeAbandoned($olderThan, $limit) as $entry) {
+            $payload = $entry['payload'];
+            $attempt = $entry['attempt'] + 1;
+            if ($attempt > self::MAX_ATTEMPTS) {
+                echo '[Task] ' . date('Y-m-d H:i:s') . " gave up on {$payload[0]}::{$payload[1]} after "
+                    . self::MAX_ATTEMPTS . ' attempts that never finished.' . PHP_EOL;
+                continue;
+            }
+            echo '[Task] ' . date('Y-m-d H:i:s') . " queueing {$payload[0]}::{$payload[1]} again (attempt $attempt):"
+                . ' its worker stopped before it ran.' . PHP_EOL;
+            $this->queueTask($payload, $attempt);
+            $requeued++;
+        }
+        return $requeued;
     }
 
     public function dispatch(Closure $action, ...$params)
@@ -120,8 +193,13 @@ class TaskManager
 
     public function dispatchAfter(array $action, $params)
     {
-        Timer::after(1000, function () use ($action, $params) {
-            $this->dispatchArray($action, ...$params);
+        // Noted now, not when the timer fires: a worker stopping within that second clears its
+        // timers, and the task would go with them.
+        [$class, $method] = $action;
+        $payload = [$class, $method, $params];
+        $journalId = $this->journalBegin($payload, 1);
+        Timer::after(1000, function () use ($payload, $journalId) {
+            $this->queueTask($payload, 1, $journalId);
         });
     }
 
@@ -282,8 +360,7 @@ class TaskManager
                 $this->appServer->timeTable->del($message->data->key);
             });
         } else {
-            [$class, $method, $params] = $message->data;
-            $this->appServer->app->task($class, $method, $params);
+            $this->runQueued($message->data);
         }
     }
 

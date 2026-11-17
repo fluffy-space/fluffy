@@ -37,9 +37,10 @@ Group=_GROUP_
 # Swoole holds an fd per connection; the 1024 default silently caps concurrency long before
 # the app does. Matches what the bundled redis unit already asks for.
 LimitNOFILE=65535
-# Finite, so a wedged worker can't hang `systemctl restart` forever (Swoole's own
-# max_wait_time is 5s, so a healthy stop is well inside this).
-TimeoutStopSec=30
+# Finite, so a wedged worker can't hang `systemctl restart` forever. Longer than Swoole's own
+# max_wait_time (30 s in configs/server.php): workers get that long to finish what they are doing,
+# and Swoole then kills the ones still busy itself. Equal to it, systemd's SIGKILL raced Swoole's.
+TimeoutStopSec=45
 
 [Install]
 WantedBy=multi-user.target

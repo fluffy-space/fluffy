@@ -5,6 +5,7 @@ use Fluffy\Domain\Message\HttpContext;
 use Fluffy\Services\UtilsService;
 use Fluffy\Swoole\Message\SwooleHttpRequest;
 use Fluffy\Swoole\Message\SwooleHttpResponse;
+use Fluffy\Swoole\Task\TaskManager;
 use Swoole\Atomic;
 use Swoole\Constant;
 use Swoole\Coroutine\Channel;
@@ -119,6 +120,19 @@ class AppServer
             Timer::clearAll();
             $this->stopped = true;
             echo "[Server] Stop for $workerId" . PHP_EOL;
+        });
+        // A worker on its way out (reload or stop, with reload_async): Swoole waits for its event
+        // loop to empty, up to max_wait_time, then kills it with whatever it is still doing. The
+        // ping, heartbeat and cron timers never let the loop empty, so every exiting worker sat out
+        // the full wait and was killed, and the old cron worker kept dispatching jobs alongside the
+        // new one meanwhile. Clearing them here lets a worker leave as soon as the requests, tasks
+        // and jobs it already has are done. Swoole may call this more than once; it is idempotent.
+        $this->server->on('WorkerExit', function (Server $server, $workerId) {
+            if (!$this->stopped) {
+                $this->stopped = true;
+                Timer::clearAll();
+                echo "[Server] Worker $workerId is finishing its work before it exits" . PHP_EOL;
+            }
         });
         $this->server->on('request', [$this, 'onRequest']);
         $this->server->on('Task', [$this, 'onTask']);
@@ -354,8 +368,7 @@ class AppServer
             Swoole\Coroutine::sleep(0.01);
         }
 
-        [$class, $method, $params] = $task->data;
-        $result = $this->app->task($class, $method, $params);
+        $result = $this->app->getProvider()->get(TaskManager::class)->runQueued($task->data);
         // With task_enable_coroutine the return value is ignored: an answer reaches a waiting
         // taskwait()/taskCo() (or a task callback) only through finish(). Reply when someone is
         // waiting, which Swoole marks with COROUTINE or CALLBACK, or by leaving out NONBLOCK;

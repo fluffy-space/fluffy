@@ -28,93 +28,88 @@ class ClickHouseConnector implements IClickHouseConnector, IDisposable
     /** Set between beginSession() and endSession(): every request carries it (see beginSession). */
     private ?string $sessionId = null;
     private int $sessionTimeout = 60;
-    /** Inside parallel(): the coroutine that called it keeps $client; each task coroutine gets its own. */
-    private ?int $ownerCid = null;
-    /** @var array<int, Client> task coroutine id => its borrowed client */
-    private array $taskClients = [];
-    /** @var array<int, bool> task coroutine id => its client hit a transport error */
-    private array $taskBroken = [];
-
-    /** At most this many queries of one parallel() at once, so one report never takes the whole pool. */
+    /** Default for parallel(): at most this many tasks at once, so one caller never takes the whole pool. */
     const PARALLEL_LIMIT = 4;
 
     public function __construct(private IClickHousePool $pool, private Config $config) {}
 
     private function get(): Client
     {
-        $cid = $this->taskCid();
-        if ($cid !== null) {
-            return $this->taskClients[$cid] ??= $this->pool->get();
-        }
         return $this->client ??= $this->pool->get();
     }
 
-    /** The current coroutine id when it is a parallel() task, null otherwise. */
-    private function taskCid(): ?int
-    {
-        if ($this->ownerCid === null) {
-            return null;
-        }
-        $cid = Coroutine::getCid();
-        return $cid !== $this->ownerCid ? $cid : null;
-    }
-
     /**
-     * Run independent read callables concurrently, each on its own pooled connection, at most
-     * PARALLEL_LIMIT at a time; returns their results under the same keys. A report of many small
-     * queries then takes about as long as its slowest query instead of the sum of all of them.
+     * Run independent tasks concurrently, each on its OWN connector borrowed from the same pool, at
+     * most $limit at a time. Each task is `fn(IClickHouseConnector $ch): mixed` and must use the
+     * connector it is given, never this one. Returns the results under the task keys, in task order.
      *
-     * Falls back to running them in order when there is nothing to gain or it would be wrong:
-     * outside a coroutine, inside a session (ClickHouse runs one query at a time per session, and
-     * a session's temporary tables live on it), or for a single task. The callables must only use
-     * this connector for ClickHouse and must not call parallel() themselves. The first task error
-     * is rethrown after every task has finished and returned its connection.
+     * Rules this relies on, checked on Swoole 6.2.2 (2026-11-17, scripts kept in the commit message):
+     * - A Coroutine\Http\Client must never be used by two coroutines at once: Swoole raises
+     *   "Socket#N has already been bound to another coroutine#M ... is not allowed". Hence one
+     *   connector (one pooled client) per task, disposed in `finally` so the client always goes back
+     *   to the pool (or is discarded after a transport error, as dispose() decides).
+     * - An exception that leaves a coroutine is a PHP Fatal error that ends the process (a server
+     *   worker, with every request on it). Swoole\Coroutine\batch() does not catch, so it is not
+     *   used. Every task's Throwable is caught inside its coroutine and the first one, in task order,
+     *   is rethrown here after all tasks have finished.
+     * - WaitGroup::add() throws while another coroutine is in wait(), so every add() happens before
+     *   wait(); done() runs in `finally` so a failed task cannot leave wait() blocked.
+     * - The pool's get() waits at most WaitsForConnection::$waitSeconds and then throws; a drained
+     *   pool becomes a task error, not a hang.
      *
-     * @param array<string|int, callable(): mixed> $tasks
+     * Runs the tasks in order on THIS connector instead when concurrency is impossible or wrong:
+     * outside a coroutine (Coroutine::getCid() is -1), or inside a session, whose temporary tables
+     * live on this connection and which ClickHouse serves one query at a time.
+     *
+     * Concurrency only pays when the tasks wait on the network. ClickHouse already spreads one query
+     * over every core (max_threads), so CPU-heavy queries side by side mostly compete: measure.
+     *
+     * @param array<string|int, callable(IClickHouseConnector): mixed> $tasks
      * @return array<string|int, mixed>
      */
-    public function parallel(array $tasks): array
+    public function parallel(array $tasks, int $limit = self::PARALLEL_LIMIT): array
     {
-        if (count($tasks) < 2 || $this->sessionId !== null || $this->ownerCid !== null || Coroutine::getCid() < 0) {
+        if ($limit < 1) {
+            throw new \InvalidArgumentException('parallel(): $limit must be at least 1.');
+        }
+        if (count($tasks) < 2 || $limit === 1 || $this->sessionId !== null || Coroutine::getCid() < 0) {
             $results = [];
             foreach ($tasks as $key => $task) {
-                $results[$key] = $task();
+                $results[$key] = $task($this);
             }
             return $results;
         }
-        $this->ownerCid = Coroutine::getCid();
+
         $results = [];
         $errors = [];
-        $slots = new Channel(self::PARALLEL_LIMIT);
+        $slots = new Channel($limit);
         $group = new WaitGroup();
-        try {
-            foreach ($tasks as $key => $task) {
-                $slots->push(true); // waits while PARALLEL_LIMIT tasks are running
-                $group->add();
-                Coroutine::create(function () use ($key, $task, &$results, &$errors, $slots, $group) {
-                    $cid = Coroutine::getCid();
+        foreach ($tasks as $key => $task) {
+            $slots->push(true); // blocks this coroutine while $limit tasks are running
+            $group->add();
+            Coroutine::create(function () use ($key, $task, &$results, &$errors, $slots, $group): void {
+                $connector = new self($this->pool, $this->config);
+                try {
+                    $results[$key] = $task($connector);
+                } catch (Throwable $e) {
+                    $errors[$key] = $e;
+                } finally {
                     try {
-                        $results[$key] = $task();
-                    } catch (Throwable $e) {
-                        $errors[$key] = $e;
+                        $connector->dispose();
                     } finally {
-                        if (isset($this->taskClients[$cid])) {
-                            $this->pool->put(!empty($this->taskBroken[$cid]) ? null : $this->taskClients[$cid]);
-                        }
-                        unset($this->taskClients[$cid], $this->taskBroken[$cid]);
                         $slots->pop();
                         $group->done();
                     }
-                });
+                }
+            });
+        }
+        $group->wait();
+
+        foreach (array_keys($tasks) as $key) {
+            if (isset($errors[$key])) {
+                throw $errors[$key];
             }
-            $group->wait();
-        } finally {
-            $this->ownerCid = null;
         }
-        if ($errors !== []) {
-            throw reset($errors);
-        }
-        // Same order as the tasks, whatever order they finished in.
         $ordered = [];
         foreach (array_keys($tasks) as $key) {
             $ordered[$key] = $results[$key] ?? null;
@@ -147,12 +142,7 @@ class ClickHouseConnector implements IClickHouseConnector, IDisposable
 
         // Transport failure -> connection unusable, must not return to pool.
         if ($client->errCode !== 0 || $client->statusCode < 0) {
-            $taskCid = $this->taskCid();
-            if ($taskCid !== null) {
-                $this->taskBroken[$taskCid] = true;
-            } else {
-                $this->broken = true;
-            }
+            $this->broken = true;
             throw new RuntimeException("ClickHouse transport error: {$client->errMsg} ({$client->errCode})");
         }
         // Application error -> socket still fine (keep-alive), surface the CH message.

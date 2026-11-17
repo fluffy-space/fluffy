@@ -33,8 +33,12 @@ interface IClickHouseConnector
     function getPool(): IClickHousePool;
 
     /**
-     * Run independent read callables concurrently on separate pooled connections (bounded); in order
-     * when not in a coroutine or inside a session. @param array<string|int, callable(): mixed> $tasks
+     * Run independent tasks concurrently, each given its own connector from the same pool, at most
+     * $limit at once; in order on this connector outside a coroutine or inside a session. The first
+     * task error (in task order) is rethrown after all tasks finished. See ClickHouseConnector.
+     *
+     * @param array<string|int, callable(IClickHouseConnector): mixed> $tasks
+     * @return array<string|int, mixed>
      */
-    function parallel(array $tasks): array;
+    function parallel(array $tasks, int $limit = 4): array;
 }

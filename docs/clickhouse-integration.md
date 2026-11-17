@@ -636,3 +636,24 @@ sudo CH_PASSWORD='…' bash scripts/provision-clickhouse-user.sh \
 - **No ORM** — ClickHouse tables are DDL/`command()`-managed; don't expect `model build`/migrations.
 - **Eventual consistency** — `MATERIALIZED VIEW` rollups and `async_insert` mean reads can lag writes
   by background-merge time; use `FINAL` or read the raw table for read-your-writes needs.
+
+## Concurrent queries: `parallel()`
+
+`IClickHouseConnector::parallel(array $tasks, int $limit = 4)` runs independent tasks at once. Each
+task is `fn(IClickHouseConnector $ch)` and gets its own connector from the same pool; it must use
+that one. Results come back under the task keys in task order; the first task error (in task order)
+is rethrown after every task finished and returned its connection. It runs the tasks in order on the
+caller's connector outside a coroutine and inside a session (temporary tables live on that
+connection). Verified on Swoole 6.2.2 (2026-11-17), and the reasons it is built this way:
+
+- one Coroutine\Http\Client used by two coroutines at once raises "Socket#N has already been bound
+  to another coroutine ... is not allowed", so every task has its own client;
+- an exception leaving a coroutine is a Fatal error that ends the worker, and
+  `Swoole\Coroutine\batch()` does not catch, so every task catches inside its coroutine;
+- `WaitGroup::add()` throws while another coroutine waits, so all adds come before `wait()`, and
+  `done()` sits in `finally`;
+- the pool's `get()` gives up after `WaitsForConnection::$waitSeconds`, so a drained pool is an error.
+
+Measure before using it: ClickHouse already runs one query on every core (`max_threads`), so
+CPU-heavy queries side by side mostly compete. It pays when tasks wait on the network or a slow
+server. Check: `php vendor/fluffy-space/fluffy/scripts/clickhouse-parallel-check.php`.

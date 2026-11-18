@@ -110,6 +110,13 @@ class TaskManager
     public function runQueued(array $payload): array
     {
         [$class, $method, $params] = $payload;
+        if (($payload['j'] ?? null) !== null && $this->journal !== null) {
+            try {
+                $this->journal->started($payload['j']);
+            } catch (\Throwable $t) {
+                echo '[Task] journal unavailable: ' . $t->getMessage() . PHP_EOL;
+            }
+        }
         $result = $this->appServer->app->task($class, $method, $params);
         if (($payload['j'] ?? null) !== null && $this->journal !== null) {
             try {
@@ -122,18 +129,19 @@ class TaskManager
     }
 
     /**
-     * Queue again the tasks a dead worker took with it: noted more than $olderThan seconds ago and
-     * never run. Each goes back with its attempt count; past MAX_ATTEMPTS it is dropped and logged.
-     * $olderThan must be longer than any task takes, or a slow one would run twice.
+     * Queue again the tasks a dead worker took with it: queued more than $olderThan seconds ago and
+     * never started, or started more than $startedOlderThan seconds ago and never finished. Each goes
+     * back with its attempt count; past MAX_ATTEMPTS it is dropped and logged. $startedOlderThan must
+     * be longer than any task runs, or a slow one would run twice.
      * @return int tasks queued again
      */
-    public function requeueAbandoned(int $olderThan, int $limit = 100): int
+    public function requeueAbandoned(int $olderThan, int $limit = 100, int $startedOlderThan = 3600): int
     {
         if ($this->journal === null) {
             return 0;
         }
         $requeued = 0;
-        foreach ($this->journal->takeAbandoned($olderThan, $limit) as $entry) {
+        foreach ($this->journal->takeAbandoned($olderThan, $limit, $startedOlderThan) as $entry) {
             $payload = $entry['payload'];
             $attempt = $entry['attempt'] + 1;
             if ($attempt > self::MAX_ATTEMPTS) {

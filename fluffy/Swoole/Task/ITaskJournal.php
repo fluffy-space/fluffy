@@ -18,11 +18,18 @@ interface ITaskJournal
      */
     public function begin(array $payload, int $attempt): ?string;
 
+    /**
+     * The task began to run (called by the worker that runs it). From here it is measured against
+     * the longer $startedOlderThan of takeAbandoned(), so a task that runs long is not taken as lost.
+     */
+    public function started(string $id): void;
+
     public function done(string $id): void;
 
     /**
-     * Tasks noted more than $olderThan seconds ago and never crossed off, taken off the journal.
+     * Tasks never crossed off, taken off the journal: those that never started, noted more than
+     * $olderThan seconds ago, and those that started more than $startedOlderThan seconds ago.
      * @return array<int, array{payload: array, attempt: int}>
      */
-    public function takeAbandoned(int $olderThan, int $limit): array;
+    public function takeAbandoned(int $olderThan, int $limit, int $startedOlderThan = 3600): array;
 }

@@ -32,6 +32,9 @@ class UsersMigration extends BaseMigration
                 'Active' => CommonMap::$Boolean,
                 'EmailConfirmed' => CommonMap::$Boolean,
                 'Permissions' => CommonMap::$BigIntDefault0,
+                // Also added by UserTimeZoneMigration (IF NOT EXISTS) for databases made before it.
+                // Needed here because the admin rows below are written with every mapped column.
+                'TimeZone' => CommonMap::VarChar(64, true),
                 'CreatedOn' => CommonMap::$MicroDateTime,
                 'CreatedBy' => CommonMap::$VarChar255Null,
                 'UpdatedOn' => CommonMap::$MicroDateTime,
